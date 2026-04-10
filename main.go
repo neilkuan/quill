@@ -14,11 +14,11 @@ import (
 	"github.com/neilkuan/openab-go/platform"
 )
 
-var version = "dev"
+var commit = "unknown"
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		fmt.Printf("openab-go %s\n", version)
+		fmt.Printf("openab-go (%s)\n", commit)
 		os.Exit(0)
 	}
 
