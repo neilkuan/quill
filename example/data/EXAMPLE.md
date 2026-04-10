@@ -96,7 +96,7 @@ docker-compose restart claude  # Restart Claude
 
 ## Environment Variables
 
-Both services are set with `OPENAB_LOG=debug` for detailed logging.
+Both services are set with `OPENAB_GO_LOG=debug` for detailed logging.
 
 ## Data Persistence
 

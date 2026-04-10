@@ -98,7 +98,7 @@ go build -ldflags "-X main.version=$(cat VERSION)" -o openab-go .
 ###### Run with debug logging
 
 ```bash
-OPENAB_LOG=debug ./openab-go config.toml
+OPENAB_GO_LOG=debug ./openab-go config.toml
 ```
 
 ###### Project Structure

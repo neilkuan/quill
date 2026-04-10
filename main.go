@@ -24,7 +24,7 @@ func main() {
 
 	// Setup structured logging
 	logLevel := slog.LevelInfo
-	if os.Getenv("OPENAB_LOG") == "debug" {
+	if os.Getenv("OPENAB_GO_LOG") == "debug" {
 		logLevel = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
@@ -100,7 +100,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("openab started", "platforms", len(platforms))
+	slog.Info("openab-go started", "platforms", len(platforms))
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -117,5 +117,5 @@ func main() {
 		}
 	}
 	pool.Shutdown()
-	slog.Info("openab shut down")
+	slog.Info("openab-go shut down")
 }

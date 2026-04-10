@@ -7,7 +7,7 @@ services:
       - ./data/home/agent:/home/agent
       - ./data/config/kiro/config.toml:/etc/openab-go/config.toml
     environment:
-      - OPENAB_LOG=debug
+      - OPENAB_GO_LOG=debug
   claude:
     image: "ghcr.io/neilkuan/openab-go-claude:latest"
     container_name: openab-go-claude
@@ -16,4 +16,4 @@ services:
       - ./data/home/node:/home/node
       - ./data/config/claude/config.toml:/etc/openab-go/config.toml
     environment:
-      - OPENAB_LOG=debug
+      - OPENAB_GO_LOG=debug

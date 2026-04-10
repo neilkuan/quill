@@ -9,7 +9,7 @@ go build -o openab-go .
 ./openab-go                    # uses config.toml in cwd
 ./openab-go /path/to/config.toml  # custom config path
 ./openab-go --version          # print version
-OPENAB_LOG=debug ./openab-go   # enable debug logging
+OPENAB_GO_LOG=debug ./openab-go   # enable debug logging
 
 # inject version at build time
 go build -ldflags "-X main.version=0.1.0" -o openab-go .
