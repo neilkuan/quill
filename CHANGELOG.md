@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.1.3](https://github.com/neilkuan/openab-go/compare/v0.1.2...v0.1.3) - 2026-04-10
+- chore: switch Docker build cache from GHA to registry by @neilkuan in https://github.com/neilkuan/openab-go/pull/8
+
 ## [v0.1.2](https://github.com/neilkuan/openab-go/compare/v0.1.1...v0.1.2) - 2026-04-10
 - chore: optimize Dockerfile layer caching by @neilkuan in https://github.com/neilkuan/openab-go/pull/6
 
