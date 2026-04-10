@@ -220,7 +220,7 @@ func (c *AcpConnection) Initialize() error {
 	resp, err := c.sendRequest("initialize", map[string]interface{}{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]interface{}{},
-		"clientInfo":         map[string]string{"name": "openab", "version": "0.1.0"},
+		"clientInfo":         map[string]string{"name": "openab-go", "version": "0.1.0"},
 	})
 	if err != nil {
 		return err
