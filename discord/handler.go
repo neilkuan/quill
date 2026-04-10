@@ -214,8 +214,12 @@ func streamPrompt(
 		}()
 
 		// Process ACP notifications
+		var promptErr error
 		for notification := range rx {
 			if notification.ID != nil {
+				if notification.Error != nil {
+					promptErr = notification.Error
+				}
 				break
 			}
 
@@ -267,6 +271,12 @@ func streamPrompt(
 
 		conn.PromptDone()
 		close(done)
+
+		// If the prompt returned an error, surface it
+		if promptErr != nil {
+			s.ChannelMessageEdit(channelID, currentMsgID, fmt.Sprintf("⚠️ %v", promptErr))
+			return promptErr
+		}
 
 		// Final edit
 		finalContent := composeDisplay(toolLines, textBuf.String())
