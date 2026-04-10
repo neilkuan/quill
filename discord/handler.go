@@ -188,10 +188,10 @@ func streamPrompt(
 		currentMsgID := msgID
 		done := make(chan struct{})
 
-		// Spawn edit-streaming goroutine
+		// Spawn edit-streaming goroutine — truncate only, never send new messages.
+		// Split into multiple messages only on final edit after streaming ends.
 		go func() {
 			lastContent := ""
-			editMsgID := msgID
 			ticker := time.NewTicker(1500 * time.Millisecond)
 			defer ticker.Stop()
 
@@ -203,20 +203,8 @@ func streamPrompt(
 					displayMu.Unlock()
 
 					if content != lastContent {
-						if len(content) > 1900 {
-							chunks := platform.SplitMessage(content, 1900)
-							if len(chunks) > 0 {
-								s.ChannelMessageEdit(channelID, editMsgID, chunks[0])
-							}
-							for _, chunk := range chunks[1:] {
-								newMsg, err := s.ChannelMessageSend(channelID, chunk)
-								if err == nil {
-									editMsgID = newMsg.ID
-								}
-							}
-						} else {
-							s.ChannelMessageEdit(channelID, editMsgID, content)
-						}
+						preview := platform.TruncateUTF8(content, 1900, "\n…")
+						s.ChannelMessageEdit(channelID, msgID, preview)
 						lastContent = content
 					}
 				case <-done:
@@ -226,8 +214,12 @@ func streamPrompt(
 		}()
 
 		// Process ACP notifications
+		var promptErr error
 		for notification := range rx {
 			if notification.ID != nil {
+				if notification.Error != nil {
+					promptErr = notification.Error
+				}
 				break
 			}
 
@@ -279,6 +271,12 @@ func streamPrompt(
 
 		conn.PromptDone()
 		close(done)
+
+		// If the prompt returned an error, surface it
+		if promptErr != nil {
+			s.ChannelMessageEdit(channelID, currentMsgID, fmt.Sprintf("⚠️ %v", promptErr))
+			return promptErr
+		}
 
 		// Final edit
 		finalContent := composeDisplay(toolLines, textBuf.String())

@@ -83,3 +83,54 @@ func TestSplitMessage_AllChunksWithinLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitMessage_HardSplitUTF8Safe(t *testing.T) {
+	// "你好世界" = 4 chars, 12 bytes. Limit 7 bytes → must not cut mid-character.
+	line := "你好世界"
+	result := SplitMessage(line, 7)
+
+	for i, chunk := range result {
+		// Verify valid UTF-8 by round-tripping through []rune
+		if string([]rune(chunk)) != chunk {
+			t.Fatalf("chunk %d is not valid UTF-8: %q", i, chunk)
+		}
+		if len(chunk) > 7 {
+			t.Fatalf("chunk %d exceeds limit: len=%d, content=%q", i, len(chunk), chunk)
+		}
+	}
+	joined := strings.Join(result, "")
+	if joined != line {
+		t.Fatalf("chunks don't reassemble: got %q, want %q", joined, line)
+	}
+}
+
+func TestTruncateUTF8_Short(t *testing.T) {
+	result := TruncateUTF8("hello", 100, "…")
+	if result != "hello" {
+		t.Fatalf("expected 'hello', got %q", result)
+	}
+}
+
+func TestTruncateUTF8_Truncates(t *testing.T) {
+	result := TruncateUTF8("hello world", 8, "…")
+	// "hello w" = 7 bytes + "…" = 10 bytes, but target is 8 - 3(…) = 5
+	// so "hello" + "…"
+	if len(result) > 8 {
+		t.Fatalf("result exceeds limit: len=%d, content=%q", len(result), result)
+	}
+	if !strings.HasSuffix(result, "…") {
+		t.Fatalf("expected suffix '…', got %q", result)
+	}
+}
+
+func TestTruncateUTF8_CJK(t *testing.T) {
+	text := "你好世界這是測試"
+	result := TruncateUTF8(text, 10, "…")
+	// Each CJK char = 3 bytes, "…" = 3 bytes, target = 10 - 3 = 7 bytes → 2 chars (6 bytes)
+	if len(result) > 10 {
+		t.Fatalf("result exceeds limit: len=%d, content=%q", len(result), result)
+	}
+	if string([]rune(result)) != result {
+		t.Fatalf("result is not valid UTF-8: %q", result)
+	}
+}
