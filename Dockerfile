@@ -10,11 +10,15 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.commit=${COMMIT}" -o openab-g
 # --- Runtime stage ---
 FROM debian:bookworm-slim
 
-ARG TARGETOS TARGETARCH
+ARG GH_CLI_VERSION=2.74.1
 
+# Layer 1: stable system packages (rarely changes)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl unzip procps \
-    && ARCH=$(dpkg --print-architecture) \
+    && rm -rf /var/lib/apt/lists/*
+
+# Layer 2: kiro-cli + gh CLI (pinned versions, cacheable)
+RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" = "arm64" ]; then \
          KIRO_URL="https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-aarch64-linux.zip"; \
        else \
@@ -24,12 +28,10 @@ RUN apt-get update \
     && unzip -q /tmp/kirocli.zip -d /tmp \
     && cp /tmp/kirocli/bin/* /usr/local/bin/ \
     && chmod +x /usr/local/bin/kiro-cli* \
-    && GH_VERSION=$(curl -s https://api.github.com/repos/cli/cli/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+') \
-    && curl -sSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
+    && curl -sSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_${ARCH}.tar.gz" \
        | tar xz -C /tmp \
-    && mv /tmp/gh_${GH_VERSION}_linux_${ARCH}/bin/gh /usr/local/bin/gh \
-    && apt-get purge -y --auto-remove unzip \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
+    && mv /tmp/gh_${GH_CLI_VERSION}_linux_${ARCH}/bin/gh /usr/local/bin/gh \
+    && rm -rf /tmp/*
 
 RUN useradd -m -s /bin/bash -u 1000 agent \
     && mkdir -p /home/agent/.local/share/kiro-cli /home/agent/.kiro \
