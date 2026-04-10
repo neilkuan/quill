@@ -81,8 +81,8 @@ jobs:
           platforms: ${{ matrix.platform.os }}
           build-args: COMMIT=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.variant.suffix }}-${{ matrix.platform.os }}
-          cache-to: type=gha,scope=${{ matrix.variant.suffix }}-${{ matrix.platform.os }},mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }}:cache-${{ matrix.platform.runner }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }}:cache-${{ matrix.platform.runner }},mode=max
 
       - name: Export digest
         run: |
