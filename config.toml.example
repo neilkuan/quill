@@ -28,14 +28,14 @@ args = ["acp", "--trust-all-tools"]
 working_dir = "/home/agent"
 
 # [agent]
-# command = "claude"
-# args = ["--acp"]
+# command = "claude-agent-acp"
+# args = []
 # working_dir = "/home/agent"
 # env = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
 
 # [agent]
-# command = "codex"
-# args = ["--acp"]
+# command = "codex-acp"
+# args = []
 # working_dir = "/home/agent"
 # env = { OPENAI_API_KEY = "${OPENAI_API_KEY}" }
 
