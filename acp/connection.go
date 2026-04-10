@@ -2,6 +2,7 @@ package acp
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ type AcpConnection struct {
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
 	stdinMu      sync.Mutex
+	stderrBuf    *bytes.Buffer
 	nextID       atomic.Uint64
 	pending      map[uint64]chan *JsonRpcMessage
 	pendingMu    sync.Mutex
@@ -43,7 +45,9 @@ func SpawnConnection(command string, args []string, workingDir string, env map[s
 
 	cmd := exec.Command(command, args...)
 	cmd.Dir = workingDir
-	cmd.Stderr = nil
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 
 	for k, v := range env {
 		cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%s", k, expandEnv(v)))
@@ -66,6 +70,7 @@ func SpawnConnection(command string, args []string, workingDir string, env map[s
 	conn := &AcpConnection{
 		cmd:        cmd,
 		stdin:      stdinPipe,
+		stderrBuf:  &stderrBuf,
 		pending:    make(map[uint64]chan *JsonRpcMessage),
 		LastActive: time.Now(),
 	}
@@ -157,10 +162,24 @@ func (c *AcpConnection) readLoop(stdout io.Reader) {
 		c.notifyMu.Unlock()
 	}
 
-	// Connection closed — resolve all pending with error
+	// Connection closed — build descriptive error from exit code + stderr
+	errMsg := "connection closed"
+	if c.cmd.ProcessState != nil {
+		exitCode := c.cmd.ProcessState.ExitCode()
+		stderr := strings.TrimSpace(c.stderrBuf.String())
+		if stderr != "" {
+			// Take last line of stderr (most relevant)
+			lines := strings.Split(stderr, "\n")
+			lastLine := strings.TrimSpace(lines[len(lines)-1])
+			errMsg = fmt.Sprintf("agent exited (code %d): %s", exitCode, lastLine)
+		} else {
+			errMsg = fmt.Sprintf("agent exited (code %d)", exitCode)
+		}
+		slog.Error("agent process exited", "exit_code", exitCode, "stderr", stderr)
+	}
+
 	c.pendingMu.Lock()
 	for id, ch := range c.pending {
-		errMsg := "connection closed"
 		ch <- &JsonRpcMessage{
 			Error: &JsonRpcError{Code: -1, Message: errMsg},
 		}
