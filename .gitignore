@@ -22,6 +22,7 @@ example/data/home/node/*
 !example/data/home/node/.claude/
 example/data/home/node/.claude/*
 !example/data/home/node/.claude/*.md
+!example/data/home/node/.claude/settings.json
 
 # Example config — only keep config.toml per agent variant
 example/data/config/*
