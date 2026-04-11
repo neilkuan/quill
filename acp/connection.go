@@ -291,7 +291,7 @@ func (c *AcpConnection) SessionNew(cwd string) (string, error) {
 // SessionPrompt sends a prompt and returns a channel for streaming notifications.
 // The final message on the channel will have ID set (the prompt response).
 // Only one prompt may be active at a time — concurrent callers block until PromptDone.
-func (c *AcpConnection) SessionPrompt(prompt string) (<-chan *JsonRpcMessage, uint64, error) {
+func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMessage, uint64, error) {
 	c.promptMu.Lock() // released by PromptDone
 
 	c.LastActive = time.Now()
@@ -309,7 +309,7 @@ func (c *AcpConnection) SessionPrompt(prompt string) (<-chan *JsonRpcMessage, ui
 	id := c.nextID.Add(1) - 1
 	req := NewJsonRpcRequest(id, "session/prompt", map[string]interface{}{
 		"sessionId": c.SessionID,
-		"prompt":    []map[string]string{{"type": "text", "text": prompt}},
+		"prompt":    content,
 	})
 	data, err := json.Marshal(req)
 	if err != nil {

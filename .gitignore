@@ -6,8 +6,10 @@ openab-go
 # Editor / OS
 *.swp
 .DS_Store
+*.output
 
 # Root config secrets (not example configs)
+/config.toml.local
 /config.toml
 
 # Example data — ignore everything under home dirs except specific dotfile configs

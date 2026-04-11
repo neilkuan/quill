@@ -18,6 +18,16 @@ This is a **Go rewrite** of [openab](https://github.com/neilkuan/openab) (origin
 
 ---
 
+##### Platform Support
+
+| Platform | Text | Image | Status |
+|----------|------|-------|--------|
+| Discord  | ✅   | ✅    | Available |
+| Telegram | —    | —     | Planned |
+| Teams    | —    | —     | Planned |
+
+---
+
 ##### Quick Start
 
 ```bash

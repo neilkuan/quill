@@ -182,6 +182,54 @@ func TestExtractStringField(t *testing.T) {
 	}
 }
 
+func TestTextBlock(t *testing.T) {
+	block := TextBlock("hello world")
+	if block["type"] != "text" {
+		t.Fatalf("expected type 'text', got %v", block["type"])
+	}
+	if block["text"] != "hello world" {
+		t.Fatalf("expected text 'hello world', got %v", block["text"])
+	}
+
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var m map[string]interface{}
+	json.Unmarshal(data, &m)
+	if m["type"] != "text" || m["text"] != "hello world" {
+		t.Fatalf("unexpected JSON: %s", string(data))
+	}
+}
+
+func TestImageBlock(t *testing.T) {
+	block := ImageBlock("aGVsbG8=", "image/png")
+	if block["type"] != "image" {
+		t.Fatalf("expected type 'image', got %v", block["type"])
+	}
+
+	source, ok := block["source"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected source to be map[string]string, got %T", block["source"])
+	}
+	if source["type"] != "base64" {
+		t.Fatalf("expected source type 'base64', got %q", source["type"])
+	}
+	if source["media_type"] != "image/png" {
+		t.Fatalf("expected media_type 'image/png', got %q", source["media_type"])
+	}
+	if source["data"] != "aGVsbG8=" {
+		t.Fatalf("expected data 'aGVsbG8=', got %q", source["data"])
+	}
+}
+
+func TestTextBlock_EmptyString(t *testing.T) {
+	block := TextBlock("")
+	if block["text"] != "" {
+		t.Fatalf("expected empty text, got %v", block["text"])
+	}
+}
+
 // --- helpers ---
 
 func makeNotification(t *testing.T, sessionUpdate, extraValue, extraKey string) *JsonRpcMessage {

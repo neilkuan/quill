@@ -3,7 +3,11 @@ package discord
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -64,7 +68,9 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	} else {
 		prompt = strings.TrimSpace(prompt)
 	}
-	if prompt == "" {
+
+	hasImages := len(m.Attachments) > 0 && hasImageAttachments(m.Attachments)
+	if prompt == "" && !hasImages {
 		return
 	}
 
@@ -86,7 +92,48 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	senderJSON, _ := json.Marshal(senderCtx)
 	promptWithSender := fmt.Sprintf("<sender_context>\n%s\n</sender_context>\n\n%s", string(senderJSON), prompt)
 
-	slog.Debug("processing", "prompt", promptWithSender, "in_thread", inThread)
+	// Download images to .tmp/ and append paths to prompt
+	var imagePaths []string
+	if hasImages {
+		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
+		if err := os.MkdirAll(tmpDir, 0700); err != nil {
+			slog.Error("failed to create temp image directory", "path", tmpDir, "error", err)
+			return
+		}
+
+		for _, att := range m.Attachments {
+			if !isImageMime(att.ContentType, att.Filename) {
+				continue
+			}
+			if att.Size > 10*1024*1024 {
+				slog.Warn("skipping large image", "filename", att.Filename, "size", att.Size)
+				continue
+			}
+			localPath, err := downloadImageToFile(att.URL, att.Filename, tmpDir)
+			if err != nil {
+				slog.Error("failed to download image", "url", att.URL, "error", err)
+				continue
+			}
+			imagePaths = append(imagePaths, localPath)
+			slog.Debug("downloaded image", "filename", att.Filename, "path", localPath)
+		}
+	}
+
+	// Build content blocks
+	var contentBlocks []acp.ContentBlock
+	if len(imagePaths) > 0 {
+		var imageSection strings.Builder
+		imageSection.WriteString("\n\n<attached_images>\n")
+		for _, p := range imagePaths {
+			imageSection.WriteString(fmt.Sprintf("- %s\n", p))
+		}
+		imageSection.WriteString("</attached_images>\nPlease read and analyze the above image(s).")
+		contentBlocks = append(contentBlocks, acp.TextBlock(promptWithSender+imageSection.String()))
+	} else {
+		contentBlocks = append(contentBlocks, acp.TextBlock(promptWithSender))
+	}
+
+	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "in_thread", inThread)
 
 	var threadID string
 	if inThread {
@@ -123,7 +170,14 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	)
 	reactions.SetQueued()
 
-	result := streamPrompt(h.Pool, threadKey, promptWithSender, s, threadID, thinkingMsg.ID, reactions)
+	result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions)
+
+	// Cleanup downloaded images
+	for _, p := range imagePaths {
+		if err := os.Remove(p); err != nil {
+			slog.Debug("failed to remove tmp image", "path", p, "error", err)
+		}
+	}
 
 	if result == nil {
 		reactions.SetDone()
@@ -155,7 +209,7 @@ func (h *Handler) OnReady(s *discordgo.Session, r *discordgo.Ready) {
 func streamPrompt(
 	pool *acp.SessionPool,
 	threadKey string,
-	prompt string,
+	content []acp.ContentBlock,
 	s *discordgo.Session,
 	channelID string,
 	msgID string,
@@ -165,7 +219,7 @@ func streamPrompt(
 		reset := conn.SessionReset
 		conn.SessionReset = false
 
-		rx, _, err := conn.SessionPrompt(prompt)
+		rx, _, err := conn.SessionPrompt(content)
 		if err != nil {
 			return err
 		}
@@ -344,4 +398,74 @@ func getOrCreateThread(s *discordgo.Session, msg *discordgo.Message, prompt stri
 	}
 
 	return thread.ID, nil
+}
+
+// --- Image attachment helpers ---
+
+var imageExtensions = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+}
+
+func hasImageAttachments(attachments []*discordgo.MessageAttachment) bool {
+	for _, att := range attachments {
+		if isImageMime(att.ContentType, att.Filename) {
+			return true
+		}
+	}
+	return false
+}
+
+func isImageMime(contentType, filename string) bool {
+	if strings.HasPrefix(contentType, "image/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	_, ok := imageExtensions[ext]
+	return ok
+}
+
+func downloadImageToFile(url, filename, tmpDir string) (string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	// Sanitize filename to prevent path traversal
+	safeFilename := filepath.Base(filename)
+	localName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), safeFilename)
+	localPath := filepath.Join(tmpDir, localName)
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		return "", fmt.Errorf("create file failed: %w", err)
+	}
+
+	written, err := io.Copy(f, io.LimitReader(resp.Body, 10*1024*1024+1))
+	if err != nil {
+		f.Close()
+		os.Remove(localPath)
+		return "", fmt.Errorf("write failed: %w", err)
+	}
+	if written > 10*1024*1024 {
+		f.Close()
+		os.Remove(localPath)
+		return "", fmt.Errorf("image too large (>10MB)")
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(localPath)
+		return "", fmt.Errorf("close file failed: %w", err)
+	}
+
+	return localPath, nil
 }

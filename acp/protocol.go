@@ -4,6 +4,32 @@ import (
 	"encoding/json"
 )
 
+// --- Content blocks for prompts ---
+
+// ContentBlock represents a single content element in an ACP prompt.
+// Uses a flexible map representation to support different JSON shapes for text and image blocks.
+type ContentBlock map[string]interface{}
+
+func TextBlock(text string) ContentBlock {
+	return ContentBlock{
+		"type": "text",
+		"text": text,
+	}
+}
+
+// ImageBlock creates an ACP image content block with nested source structure.
+// Schema: {"type":"image","source":{"type":"base64","media_type":"...","data":"..."}}
+func ImageBlock(base64Data, mimeType string) ContentBlock {
+	return ContentBlock{
+		"type": "image",
+		"source": map[string]string{
+			"type":       "base64",
+			"media_type": mimeType,
+			"data":       base64Data,
+		},
+	}
+}
+
 // --- Outgoing ---
 
 type JsonRpcRequest struct {

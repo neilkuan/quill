@@ -17,6 +17,10 @@ type SessionPool struct {
 	maxSessions int
 }
 
+func (p *SessionPool) WorkingDir() string {
+	return p.workingDir
+}
+
 func NewSessionPool(command string, args []string, workingDir string, env map[string]string, maxSessions int) *SessionPool {
 	return &SessionPool{
 		connections: make(map[string]*AcpConnection),
