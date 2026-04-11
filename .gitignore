@@ -8,6 +8,7 @@ openab-go
 .DS_Store
 
 # Root config secrets (not example configs)
+/config.toml.local
 /config.toml
 
 # Example data — ignore everything under home dirs except specific dotfile configs
