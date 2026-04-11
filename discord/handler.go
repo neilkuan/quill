@@ -122,31 +122,32 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	// Download audio attachments, optionally transcribe via external API
-	var audioPaths []string
+	// Transcribe audio attachments via external API (e.g. Whisper)
+	// ACP agents cannot process binary audio files directly, so transcription is required.
 	var transcriptions []string
 	if hasAudio {
-		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
-		if err := os.MkdirAll(tmpDir, 0700); err != nil {
-			slog.Error("failed to create temp audio directory", "path", tmpDir, "error", err)
+		if h.Transcriber == nil {
+			slog.Warn("voice message received but [transcribe] is not configured, skipping audio")
 		} else {
-			for _, att := range m.Attachments {
-				if !isAudioMime(att.ContentType, att.Filename) {
-					continue
-				}
-				if att.Size > 25*1024*1024 {
-					slog.Warn("skipping large audio", "filename", att.Filename, "size", att.Size)
-					continue
-				}
-				localPath, err := downloadAudioToFile(att.URL, att.Filename, tmpDir)
-				if err != nil {
-					slog.Error("failed to download audio", "url", att.URL, "error", err)
-					continue
-				}
-				slog.Debug("downloaded audio", "filename", att.Filename, "path", localPath)
+			tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
+			if err := os.MkdirAll(tmpDir, 0700); err != nil {
+				slog.Error("failed to create temp audio directory", "path", tmpDir, "error", err)
+			} else {
+				for _, att := range m.Attachments {
+					if !isAudioMime(att.ContentType, att.Filename) {
+						continue
+					}
+					if att.Size > 25*1024*1024 {
+						slog.Warn("skipping large audio", "filename", att.Filename, "size", att.Size)
+						continue
+					}
+					localPath, err := downloadAudioToFile(att.URL, att.Filename, tmpDir)
+					if err != nil {
+						slog.Error("failed to download audio", "url", att.URL, "error", err)
+						continue
+					}
+					slog.Debug("downloaded audio", "filename", att.Filename, "path", localPath)
 
-				if h.Transcriber != nil {
-					// Transcribe via external API (e.g. Whisper), then clean up file
 					text, err := h.Transcriber.Transcribe(localPath)
 					if removeErr := os.Remove(localPath); removeErr != nil {
 						slog.Debug("failed to remove tmp audio", "path", localPath, "error", removeErr)
@@ -157,20 +158,17 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 					}
 					transcriptions = append(transcriptions, text)
 					slog.Debug("transcribed audio", "filename", att.Filename, "text_length", len(text))
-				} else {
-					// Pass file path to agent directly (agent handles audio natively)
-					audioPaths = append(audioPaths, localPath)
 				}
 			}
 		}
 	}
 
 	// Build content blocks
-	contentText := buildPromptContent(promptWithSender, imagePaths, audioPaths, transcriptions)
+	contentText := buildPromptContent(promptWithSender, imagePaths, transcriptions)
 	var contentBlocks []acp.ContentBlock
 	contentBlocks = append(contentBlocks, acp.TextBlock(contentText))
 
-	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "audio_paths", len(audioPaths), "audio_transcriptions", len(transcriptions), "in_thread", inThread)
+	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "audio_transcriptions", len(transcriptions), "in_thread", inThread)
 
 	var threadID string
 	if inThread {
@@ -209,15 +207,10 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions)
 
-	// Cleanup downloaded images and audio files
+	// Cleanup downloaded images
 	for _, p := range imagePaths {
 		if err := os.Remove(p); err != nil {
 			slog.Debug("failed to remove tmp image", "path", p, "error", err)
-		}
-	}
-	for _, p := range audioPaths {
-		if err := os.Remove(p); err != nil {
-			slog.Debug("failed to remove tmp audio", "path", p, "error", err)
 		}
 	}
 
@@ -444,7 +437,7 @@ func getOrCreateThread(s *discordgo.Session, msg *discordgo.Message, prompt stri
 
 // --- Prompt content builder ---
 
-func buildPromptContent(base string, imagePaths, audioPaths, transcriptions []string) string {
+func buildPromptContent(base string, imagePaths, transcriptions []string) string {
 	var extra strings.Builder
 
 	if len(imagePaths) > 0 {
@@ -453,14 +446,6 @@ func buildPromptContent(base string, imagePaths, audioPaths, transcriptions []st
 			extra.WriteString(fmt.Sprintf("- %s\n", p))
 		}
 		extra.WriteString("</attached_images>\nPlease read and analyze the above image(s).")
-	}
-
-	if len(audioPaths) > 0 {
-		extra.WriteString("\n\n<attached_audio>\n")
-		for _, p := range audioPaths {
-			extra.WriteString(fmt.Sprintf("- %s\n", p))
-		}
-		extra.WriteString("</attached_audio>\nPlease listen to and process the above audio file(s). This is a voice message from the user.")
 	}
 
 	if len(transcriptions) > 0 {

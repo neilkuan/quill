@@ -443,79 +443,55 @@ func TestGithubURLRegex(t *testing.T) {
 // --- buildPromptContent ---
 
 func TestBuildPromptContent_TextOnly(t *testing.T) {
-	result := buildPromptContent("hello", nil, nil, nil)
+	result := buildPromptContent("hello", nil, nil)
 	if result != "hello" {
 		t.Errorf("expected 'hello', got %q", result)
 	}
 }
 
 func TestBuildPromptContent_WithImages(t *testing.T) {
-	result := buildPromptContent("hello", []string{"/tmp/img.png"}, nil, nil)
+	result := buildPromptContent("hello", []string{"/tmp/img.png"}, nil)
 	if !strings.Contains(result, "<attached_images>") {
 		t.Error("expected <attached_images> tag")
 	}
 	if !strings.Contains(result, "/tmp/img.png") {
 		t.Error("expected image path in output")
 	}
-	if strings.Contains(result, "<attached_audio>") {
-		t.Error("unexpected <attached_audio> tag")
-	}
-}
-
-func TestBuildPromptContent_WithAudioPaths_Passthrough(t *testing.T) {
-	result := buildPromptContent("hello", nil, []string{"/tmp/voice.ogg"}, nil)
-	if !strings.Contains(result, "<attached_audio>") {
-		t.Error("expected <attached_audio> tag")
-	}
-	if !strings.Contains(result, "/tmp/voice.ogg") {
-		t.Error("expected audio path in output")
-	}
-	if !strings.Contains(result, "voice message from the user") {
-		t.Error("expected voice message instruction")
-	}
 	if strings.Contains(result, "<voice_transcription>") {
-		t.Error("unexpected <voice_transcription> tag in passthrough mode")
+		t.Error("unexpected <voice_transcription> tag")
 	}
 }
 
 func TestBuildPromptContent_WithTranscriptions(t *testing.T) {
-	result := buildPromptContent("hello", nil, nil, []string{"這是一段測試語音"})
+	result := buildPromptContent("hello", nil, []string{"這是一段測試語音"})
 	if !strings.Contains(result, "<voice_transcription>") {
 		t.Error("expected <voice_transcription> tag")
 	}
 	if !strings.Contains(result, "這是一段測試語音") {
 		t.Error("expected transcription text in output")
 	}
-	if strings.Contains(result, "<attached_audio>") {
-		t.Error("unexpected <attached_audio> tag in transcription mode")
+	if !strings.Contains(result, "transcription of the user's voice message") {
+		t.Error("expected voice message instruction")
 	}
 }
 
-func TestBuildPromptContent_ImagesAndAudio(t *testing.T) {
+func TestBuildPromptContent_ImagesAndTranscriptions(t *testing.T) {
 	result := buildPromptContent("hello",
 		[]string{"/tmp/img.png"},
-		[]string{"/tmp/voice.ogg"},
-		nil,
+		[]string{"這是語音內容"},
 	)
 	if !strings.Contains(result, "<attached_images>") {
 		t.Error("expected <attached_images> tag")
 	}
-	if !strings.Contains(result, "<attached_audio>") {
-		t.Error("expected <attached_audio> tag")
+	if !strings.Contains(result, "<voice_transcription>") {
+		t.Error("expected <voice_transcription> tag")
 	}
 }
 
 func TestBuildPromptContent_MultipleTranscriptions(t *testing.T) {
-	result := buildPromptContent("base", nil, nil, []string{"第一段", "第二段"})
+	result := buildPromptContent("base", nil, []string{"第一段", "第二段"})
 	if !strings.Contains(result, "第一段") || !strings.Contains(result, "第二段") {
 		t.Error("expected both transcriptions in output")
-	}
-}
-
-func TestBuildPromptContent_MultipleAudioPaths(t *testing.T) {
-	result := buildPromptContent("base", nil, []string{"/tmp/a.ogg", "/tmp/b.mp3"}, nil)
-	if !strings.Contains(result, "/tmp/a.ogg") || !strings.Contains(result, "/tmp/b.mp3") {
-		t.Error("expected both audio paths in output")
 	}
 }
 
