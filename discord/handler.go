@@ -169,6 +169,13 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions)
 
+	// Cleanup downloaded images
+	for _, p := range imagePaths {
+		if err := os.Remove(p); err != nil {
+			slog.Debug("failed to remove tmp image", "path", p, "error", err)
+		}
+	}
+
 	if result == nil {
 		reactions.SetDone()
 	} else {
