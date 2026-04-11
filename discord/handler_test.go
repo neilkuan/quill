@@ -307,6 +307,28 @@ func TestDownloadImageToFile_TooLarge(t *testing.T) {
 	}
 }
 
+func TestDownloadImageToFile_PathTraversal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("data"))
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	path, err := downloadImageToFile(server.URL, "../../etc/passwd", tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// File must be inside tmpDir, not escaped
+	if !strings.HasPrefix(path, tmpDir) {
+		t.Errorf("path %q escaped tmpDir %q", path, tmpDir)
+	}
+	// filename should be sanitized to just "passwd"
+	if !strings.HasSuffix(path, "_passwd") {
+		t.Errorf("expected sanitized filename ending with '_passwd', got %q", path)
+	}
+}
+
 func TestDownloadImageToFile_InvalidURL(t *testing.T) {
 	tmpDir := t.TempDir()
 	_, err := downloadImageToFile("http://127.0.0.1:1/invalid", "test.png", tmpDir)

@@ -96,7 +96,10 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	var imagePaths []string
 	if hasImages {
 		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
-		os.MkdirAll(tmpDir, 0755)
+		if err := os.MkdirAll(tmpDir, 0700); err != nil {
+			slog.Error("failed to create temp image directory", "path", tmpDir, "error", err)
+			return
+		}
 
 		for _, att := range m.Attachments {
 			if !isImageMime(att.ContentType, att.Filename) {
@@ -437,24 +440,31 @@ func downloadImageToFile(url, filename, tmpDir string) (string, error) {
 		return "", fmt.Errorf("download returned %d", resp.StatusCode)
 	}
 
-	// Use timestamp + original filename to avoid collisions
-	localName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), filename)
+	// Sanitize filename to prevent path traversal
+	safeFilename := filepath.Base(filename)
+	localName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), safeFilename)
 	localPath := filepath.Join(tmpDir, localName)
 
 	f, err := os.Create(localPath)
 	if err != nil {
 		return "", fmt.Errorf("create file failed: %w", err)
 	}
-	defer f.Close()
 
 	written, err := io.Copy(f, io.LimitReader(resp.Body, 10*1024*1024+1))
 	if err != nil {
+		f.Close()
 		os.Remove(localPath)
 		return "", fmt.Errorf("write failed: %w", err)
 	}
 	if written > 10*1024*1024 {
+		f.Close()
 		os.Remove(localPath)
 		return "", fmt.Errorf("image too large (>10MB)")
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(localPath)
+		return "", fmt.Errorf("close file failed: %w", err)
 	}
 
 	return localPath, nil
