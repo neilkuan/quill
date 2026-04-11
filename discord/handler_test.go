@@ -440,6 +440,303 @@ func TestGithubURLRegex(t *testing.T) {
 	}
 }
 
+// --- buildPromptContent ---
+
+func TestBuildPromptContent_TextOnly(t *testing.T) {
+	result := buildPromptContent("hello", nil, nil)
+	if result != "hello" {
+		t.Errorf("expected 'hello', got %q", result)
+	}
+}
+
+func TestBuildPromptContent_WithImages(t *testing.T) {
+	result := buildPromptContent("hello", []string{"/tmp/img.png"}, nil)
+	if !strings.Contains(result, "<attached_images>") {
+		t.Error("expected <attached_images> tag")
+	}
+	if !strings.Contains(result, "/tmp/img.png") {
+		t.Error("expected image path in output")
+	}
+	if strings.Contains(result, "<voice_transcription>") {
+		t.Error("unexpected <voice_transcription> tag")
+	}
+}
+
+func TestBuildPromptContent_WithTranscriptions(t *testing.T) {
+	result := buildPromptContent("hello", nil, []string{"這是一段測試語音"})
+	if !strings.Contains(result, "<voice_transcription>") {
+		t.Error("expected <voice_transcription> tag")
+	}
+	if !strings.Contains(result, "這是一段測試語音") {
+		t.Error("expected transcription text in output")
+	}
+	if !strings.Contains(result, "transcription of the user's voice message") {
+		t.Error("expected voice message instruction")
+	}
+}
+
+func TestBuildPromptContent_ImagesAndTranscriptions(t *testing.T) {
+	result := buildPromptContent("hello",
+		[]string{"/tmp/img.png"},
+		[]string{"這是語音內容"},
+	)
+	if !strings.Contains(result, "<attached_images>") {
+		t.Error("expected <attached_images> tag")
+	}
+	if !strings.Contains(result, "<voice_transcription>") {
+		t.Error("expected <voice_transcription> tag")
+	}
+}
+
+func TestBuildPromptContent_MultipleTranscriptions(t *testing.T) {
+	result := buildPromptContent("base", nil, []string{"第一段", "第二段"})
+	if !strings.Contains(result, "第一段") || !strings.Contains(result, "第二段") {
+		t.Error("expected both transcriptions in output")
+	}
+}
+
+// --- isAudioMime ---
+
+func TestIsAudioMime_ContentType(t *testing.T) {
+	tests := []struct {
+		contentType string
+		filename    string
+		expected    bool
+	}{
+		{"audio/ogg", "voice.ogg", true},
+		{"audio/mpeg", "voice.mp3", true},
+		{"audio/wav", "voice.wav", true},
+		{"audio/flac", "voice.flac", true},
+		{"audio/mp4", "voice.m4a", true},
+		{"audio/webm", "voice.webm", true},
+		{"video/webm", "voice.webm", true},   // Discord voice messages
+		{"video/ogg", "voice.ogg", true},      // Discord voice messages
+		{"image/png", "photo.png", false},
+		{"application/pdf", "doc.pdf", false},
+		{"text/plain", "notes.txt", false},
+	}
+
+	for _, tt := range tests {
+		result := isAudioMime(tt.contentType, tt.filename)
+		if result != tt.expected {
+			t.Errorf("isAudioMime(%q, %q) = %v, want %v", tt.contentType, tt.filename, result, tt.expected)
+		}
+	}
+}
+
+func TestIsAudioMime_FallbackToExtension(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected bool
+	}{
+		{"voice.ogg", true},
+		{"voice.OGG", true},
+		{"voice.oga", true},
+		{"voice.mp3", true},
+		{"voice.wav", true},
+		{"voice.flac", true},
+		{"voice.m4a", true},
+		{"voice.webm", true},
+		{"voice.mp4", true},
+		{"photo.png", false},
+		{"doc.pdf", false},
+		{"notes.txt", false},
+		{"noext", false},
+	}
+
+	for _, tt := range tests {
+		result := isAudioMime("", tt.filename)
+		if result != tt.expected {
+			t.Errorf("isAudioMime(\"\", %q) = %v, want %v", tt.filename, result, tt.expected)
+		}
+	}
+}
+
+// --- hasAudioAttachments ---
+
+func TestHasAudioAttachments(t *testing.T) {
+	tests := []struct {
+		name        string
+		attachments []*discordgo.MessageAttachment
+		expected    bool
+	}{
+		{
+			"no attachments",
+			nil,
+			false,
+		},
+		{
+			"one audio",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "audio/ogg", Filename: "voice.ogg"},
+			},
+			true,
+		},
+		{
+			"one non-audio",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "image/png", Filename: "photo.png"},
+			},
+			false,
+		},
+		{
+			"mixed attachments with audio",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "image/png", Filename: "photo.png"},
+				{ContentType: "audio/ogg", Filename: "voice.ogg"},
+			},
+			true,
+		},
+		{
+			"discord voice message (video/webm)",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "video/webm", Filename: "voice-message.webm"},
+			},
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := hasAudioAttachments(tt.attachments)
+			if result != tt.expected {
+				t.Errorf("hasAudioAttachments() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// --- audioExtensions map ---
+
+func TestAudioExtensionsMap(t *testing.T) {
+	expected := map[string]string{
+		".ogg":  "audio/ogg",
+		".oga":  "audio/ogg",
+		".mp3":  "audio/mpeg",
+		".wav":  "audio/wav",
+		".flac": "audio/flac",
+		".m4a":  "audio/mp4",
+		".webm": "audio/webm",
+		".mp4":  "audio/mp4",
+	}
+
+	for ext, mime := range expected {
+		got, ok := audioExtensions[ext]
+		if !ok {
+			t.Errorf("missing extension %q in audioExtensions", ext)
+			continue
+		}
+		if got != mime {
+			t.Errorf("audioExtensions[%q] = %q, want %q", ext, got, mime)
+		}
+	}
+
+	if len(audioExtensions) != len(expected) {
+		t.Errorf("audioExtensions has %d entries, want %d", len(audioExtensions), len(expected))
+	}
+}
+
+// --- downloadAudioToFile ---
+
+func TestDownloadAudioToFile_Success(t *testing.T) {
+	audioData := []byte("fake-ogg-data")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/ogg")
+		w.Write(audioData)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	path, err := downloadAudioToFile(server.URL, "voice.ogg", tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasSuffix(path, "_voice.ogg") {
+		t.Errorf("expected path ending with '_voice.ogg', got %q", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read downloaded file: %v", err)
+	}
+	if string(data) != string(audioData) {
+		t.Errorf("file content mismatch: got %q, want %q", string(data), string(audioData))
+	}
+}
+
+func TestDownloadAudioToFile_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	_, err := downloadAudioToFile(server.URL, "voice.ogg", tmpDir)
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("expected error to mention 404, got %q", err.Error())
+	}
+}
+
+func TestDownloadAudioToFile_TooLarge(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/ogg")
+		// Write 25MB + 2 bytes
+		chunk := make([]byte, 1024*1024)
+		for i := 0; i < 25; i++ {
+			w.Write(chunk)
+		}
+		w.Write([]byte("xx"))
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	_, err := downloadAudioToFile(server.URL, "huge.ogg", tmpDir)
+	if err == nil {
+		t.Fatal("expected error for oversized audio")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("expected 'too large' in error, got %q", err.Error())
+	}
+
+	// Verify no leftover file
+	files, _ := os.ReadDir(tmpDir)
+	if len(files) != 0 {
+		t.Errorf("expected cleanup of temp file, found %d files", len(files))
+	}
+}
+
+func TestDownloadAudioToFile_PathTraversal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("data"))
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	path, err := downloadAudioToFile(server.URL, "../../etc/passwd", tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(path, tmpDir) {
+		t.Errorf("path %q escaped tmpDir %q", path, tmpDir)
+	}
+	if !strings.HasSuffix(path, "_passwd") {
+		t.Errorf("expected sanitized filename ending with '_passwd', got %q", path)
+	}
+}
+
+func TestDownloadAudioToFile_InvalidURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	_, err := downloadAudioToFile("http://127.0.0.1:1/invalid", "voice.ogg", tmpDir)
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
 // --- integration-style: compose with tool progress ---
 
 func TestComposeDisplay_ToolProgress(t *testing.T) {

@@ -274,6 +274,122 @@ command = "echo"
 	}
 }
 
+func TestLoadConfig_TranscribeDefaults(t *testing.T) {
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// No API key → not enabled
+	if cfg.Transcribe.Enabled {
+		t.Fatal("expected transcribe disabled when no api_key is set")
+	}
+	if cfg.Transcribe.Provider != "openai" {
+		t.Fatalf("expected default provider 'openai', got %q", cfg.Transcribe.Provider)
+	}
+	if cfg.Transcribe.Model != "whisper-1" {
+		t.Fatalf("expected default model 'whisper-1', got %q", cfg.Transcribe.Model)
+	}
+	if cfg.Transcribe.Language != "zh" {
+		t.Fatalf("expected default language 'zh', got %q", cfg.Transcribe.Language)
+	}
+	if cfg.Transcribe.Prompt == "" {
+		t.Fatal("expected non-empty default prompt")
+	}
+}
+
+func TestLoadConfig_TranscribeEnabled(t *testing.T) {
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+
+[transcribe]
+api_key = "sk-test-key"
+model = "whisper-large-v3"
+language = "zh"
+prompt = "custom prompt"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if !cfg.Transcribe.Enabled {
+		t.Fatal("expected transcribe enabled when api_key is set")
+	}
+	if cfg.Transcribe.APIKey != "sk-test-key" {
+		t.Fatalf("expected api_key 'sk-test-key', got %q", cfg.Transcribe.APIKey)
+	}
+	if cfg.Transcribe.Model != "whisper-large-v3" {
+		t.Fatalf("expected model 'whisper-large-v3', got %q", cfg.Transcribe.Model)
+	}
+	if cfg.Transcribe.Prompt != "custom prompt" {
+		t.Fatalf("expected prompt 'custom prompt', got %q", cfg.Transcribe.Prompt)
+	}
+}
+
+func TestLoadConfig_TranscribeEnvExpansion(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-from-env")
+
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+
+[transcribe]
+api_key = "${OPENAI_API_KEY}"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Transcribe.APIKey != "sk-from-env" {
+		t.Fatalf("expected env-expanded api_key 'sk-from-env', got %q", cfg.Transcribe.APIKey)
+	}
+	if !cfg.Transcribe.Enabled {
+		t.Fatal("expected transcribe enabled after env expansion")
+	}
+}
+
+func TestLoadConfig_TranscribeCustomBaseURL(t *testing.T) {
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+
+[transcribe]
+api_key = "sk-test"
+base_url = "https://custom.openai.com/v1"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Transcribe.BaseURL != "https://custom.openai.com/v1" {
+		t.Fatalf("expected custom base_url, got %q", cfg.Transcribe.BaseURL)
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

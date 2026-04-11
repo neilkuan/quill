@@ -10,6 +10,7 @@ This is a **Go rewrite** of [openab](https://github.com/neilkuan/openab) (origin
 
 - **Pluggable agent backends** — Kiro, Claude Code, Codex, Gemini (any ACP-compatible CLI)
 - **Discord integration** — @mention triggers, auto thread creation, multi-turn conversations
+- **Voice message transcription** — transcribes Discord voice messages via OpenAI Whisper API
 - **Real-time edit streaming** — updates Discord messages every 1.5s as the agent works
 - **Emoji status reactions** — `👀→🤔→🔥/👨‍💻/⚡→🆗` showing processing progress
 - **Session pool** — one CLI process per thread, automatic lifecycle management
@@ -33,11 +34,11 @@ Supports Kiro CLI, Claude Code, Codex, Gemini, and any ACP-compatible CLI.
 
 ##### Platform Support
 
-| Platform | Text | Image | Status |
-|----------|------|-------|--------|
-| Discord  | ✅   | ✅    | Available |
-| Telegram | —    | —     | Planned |
-| Teams    | —    | —     | Planned |
+| Platform | Text | Image | Voice | Status |
+|----------|------|-------|-------|--------|
+| Discord  | ✅   | ✅    | ✅    | Available |
+| Telegram | —    | —     | —     | Planned |
+| Teams    | —    | —     | —     | Planned |
 
 ---
 
@@ -78,6 +79,21 @@ session_ttl_hours = 24
 enabled = true
 remove_after_reply = false
 ```
+
+##### Voice Transcription (Optional)
+
+To enable voice message support, add a `[transcribe]` section with an OpenAI API key:
+
+```toml
+[transcribe]
+api_key = "${OPENAI_API_KEY}"
+# provider = "openai"       # default
+# model = "whisper-1"       # default
+# language = "zh"           # ISO-639-1 code, default "zh"
+# prompt = "以下是繁體中文語音的逐字稿："  # hint for Traditional Chinese output
+```
+
+When configured, Discord voice messages are automatically transcribed and sent to the agent as text. Without this config, voice messages are skipped with a warning log.
 
 See [`config.toml.example`](config.toml.example) for the full reference including alternative agents (Claude, Codex, Gemini).
 
@@ -137,6 +153,8 @@ openab-go/
 │   ├── protocol.go      # JSON-RPC types, ACP event classification
 │   ├── connection.go    # Child process management, stdio JSON-RPC, auto-permission
 │   └── pool.go          # Session pool: get-or-create, idle cleanup, shutdown
+├── transcribe/
+│   └── transcribe.go    # Transcriber interface, OpenAI Whisper implementation
 ├── discord/
 │   ├── adapter.go       # Discord platform adapter (implements Platform interface)
 │   ├── handler.go       # Discord message handler, thread creation, edit streaming
