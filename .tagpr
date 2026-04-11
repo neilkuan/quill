@@ -3,7 +3,6 @@
 
 [tagpr]
 versionFile = "VERSION"
-tagPrefix = "v"
 releaseBranch = "main"
 changelog = true
-	vPrefix = true
+vPrefix = true
