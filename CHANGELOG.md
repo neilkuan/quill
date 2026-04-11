@@ -2,6 +2,10 @@
 
 ## [v0.4.0](https://github.com/neilkuan/openab-go/compare/v0.3.0...v0.4.0) - 2026-04-11
 - feat: add Telegram platform adapter by @neilkuan in https://github.com/neilkuan/openab-go/pull/23
+- Release for v0.4.0 by @openab-go-app[bot] in https://github.com/neilkuan/openab-go/pull/24
+
+## [v0.4.0](https://github.com/neilkuan/openab-go/compare/v0.3.0...v0.4.0) - 2026-04-11
+- feat: add Telegram platform adapter by @neilkuan in https://github.com/neilkuan/openab-go/pull/23
 
 ## [v0.3.0](https://github.com/neilkuan/openab-go/compare/v0.2.1...v0.3.0) - 2026-04-11
 - feat: add voice message transcription support by @neilkuan in https://github.com/neilkuan/openab-go/pull/16
