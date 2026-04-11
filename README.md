@@ -18,6 +18,19 @@ This is a **Go rewrite** of [openab](https://github.com/neilkuan/openab) (origin
 
 ---
 
+##### Pluggable Agent Backends
+
+Supports Kiro CLI, Claude Code, Codex, Gemini, and any ACP-compatible CLI.
+
+| Agent key | CLI | ACP Adapter | Auth |
+|---|---|---|---|
+| `kiro` (default) | Kiro CLI | Native `kiro-cli acp` | `kiro-cli login --use-device-flow` |
+| `codex` | Codex | [@zed-industries/codex-acp](https://github.com/zed-industries/codex-acp) | `codex login --device-auth` |
+| `claude` | Claude Code | [@agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | `claude auth login` or `claude setup-token` |
+| `gemini` | Gemini CLI | Native `gemini --acp` | Google OAuth or `GEMINI_API_KEY` |
+
+---
+
 ##### Platform Support
 
 | Platform | Text | Image | Status |

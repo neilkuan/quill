@@ -1,0 +1,35 @@
+# Git
+.git
+.github
+.gitignore
+
+# CI / tooling
+.claude
+.tagpr
+.tmp
+
+# Documentation
+*.md
+docs/
+LICENSE
+
+# Docker files (no need to copy into build context)
+Dockerfile
+Dockerfile.*
+.dockerignore
+
+# Built binaries
+openab-go
+*.exe
+
+# Config secrets & local overrides
+config.toml
+config.toml.local
+*.output
+
+# Example / deployment
+example/
+
+# Editor / OS
+*.swp
+.DS_Store
