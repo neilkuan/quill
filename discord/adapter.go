@@ -6,6 +6,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/neilkuan/openab-go/acp"
 	"github.com/neilkuan/openab-go/config"
+	"github.com/neilkuan/openab-go/transcribe"
 )
 
 // Adapter implements platform.Platform for Discord.
@@ -13,7 +14,7 @@ type Adapter struct {
 	session *discordgo.Session
 }
 
-func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool) (*Adapter, error) {
+func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber transcribe.Transcriber) (*Adapter, error) {
 	dg, err := discordgo.New("Bot " + cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -28,6 +29,7 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool) (*Adapter, erro
 		Pool:            pool,
 		AllowedChannels: allowed,
 		ReactionsConfig: cfg.Reactions,
+		Transcriber:     transcriber,
 	}
 
 	dg.Identify.Intents = discordgo.IntentsGuildMessages |

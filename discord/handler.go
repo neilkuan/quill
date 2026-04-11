@@ -17,12 +17,14 @@ import (
 	"github.com/neilkuan/openab-go/acp"
 	"github.com/neilkuan/openab-go/config"
 	"github.com/neilkuan/openab-go/platform"
+	"github.com/neilkuan/openab-go/transcribe"
 )
 
 type Handler struct {
 	Pool            *acp.SessionPool
 	AllowedChannels map[string]bool
 	ReactionsConfig config.ReactionsConfig
+	Transcriber     transcribe.Transcriber
 }
 
 func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -70,7 +72,8 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	hasImages := len(m.Attachments) > 0 && hasImageAttachments(m.Attachments)
-	if prompt == "" && !hasImages {
+	hasAudio := len(m.Attachments) > 0 && hasAudioAttachments(m.Attachments)
+	if prompt == "" && !hasImages && !hasAudio {
 		return
 	}
 
@@ -119,21 +122,67 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	// Build content blocks
-	var contentBlocks []acp.ContentBlock
-	if len(imagePaths) > 0 {
-		var imageSection strings.Builder
-		imageSection.WriteString("\n\n<attached_images>\n")
-		for _, p := range imagePaths {
-			imageSection.WriteString(fmt.Sprintf("- %s\n", p))
+	// Download and transcribe audio attachments
+	var transcriptions []string
+	if hasAudio && h.Transcriber != nil {
+		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
+		if err := os.MkdirAll(tmpDir, 0700); err != nil {
+			slog.Error("failed to create temp audio directory", "path", tmpDir, "error", err)
+		} else {
+			for _, att := range m.Attachments {
+				if !isAudioMime(att.ContentType, att.Filename) {
+					continue
+				}
+				if att.Size > 25*1024*1024 {
+					slog.Warn("skipping large audio", "filename", att.Filename, "size", att.Size)
+					continue
+				}
+				localPath, err := downloadAudioToFile(att.URL, att.Filename, tmpDir)
+				if err != nil {
+					slog.Error("failed to download audio", "url", att.URL, "error", err)
+					continue
+				}
+				slog.Debug("downloaded audio", "filename", att.Filename, "path", localPath)
+
+				text, err := h.Transcriber.Transcribe(localPath)
+				// Clean up audio file immediately after transcription
+				if removeErr := os.Remove(localPath); removeErr != nil {
+					slog.Debug("failed to remove tmp audio", "path", localPath, "error", removeErr)
+				}
+				if err != nil {
+					slog.Error("transcription failed", "filename", att.Filename, "error", err)
+					continue
+				}
+				transcriptions = append(transcriptions, text)
+				slog.Debug("transcribed audio", "filename", att.Filename, "text_length", len(text))
+			}
 		}
-		imageSection.WriteString("</attached_images>\nPlease read and analyze the above image(s).")
-		contentBlocks = append(contentBlocks, acp.TextBlock(promptWithSender+imageSection.String()))
-	} else {
-		contentBlocks = append(contentBlocks, acp.TextBlock(promptWithSender))
 	}
 
-	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "in_thread", inThread)
+	// Build content blocks
+	var extraSections strings.Builder
+
+	if len(imagePaths) > 0 {
+		extraSections.WriteString("\n\n<attached_images>\n")
+		for _, p := range imagePaths {
+			extraSections.WriteString(fmt.Sprintf("- %s\n", p))
+		}
+		extraSections.WriteString("</attached_images>\nPlease read and analyze the above image(s).")
+	}
+
+	if len(transcriptions) > 0 {
+		extraSections.WriteString("\n\n<voice_transcription>\n")
+		for _, t := range transcriptions {
+			extraSections.WriteString(t)
+			extraSections.WriteByte('\n')
+		}
+		extraSections.WriteString("</voice_transcription>\nThe above is a transcription of the user's voice message. Please respond to it.")
+	}
+
+	var contentBlocks []acp.ContentBlock
+	contentBlocks = append(contentBlocks, acp.TextBlock(promptWithSender+extraSections.String()))
+
+	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "audio_transcriptions", len(transcriptions), "in_thread", inThread)
 
 	var threadID string
 	if inThread {
@@ -460,6 +509,83 @@ func downloadImageToFile(url, filename, tmpDir string) (string, error) {
 		f.Close()
 		os.Remove(localPath)
 		return "", fmt.Errorf("image too large (>10MB)")
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(localPath)
+		return "", fmt.Errorf("close file failed: %w", err)
+	}
+
+	return localPath, nil
+}
+
+// --- Audio attachment helpers ---
+
+var audioExtensions = map[string]string{
+	".ogg":  "audio/ogg",
+	".oga":  "audio/ogg",
+	".mp3":  "audio/mpeg",
+	".wav":  "audio/wav",
+	".flac": "audio/flac",
+	".m4a":  "audio/mp4",
+	".webm": "audio/webm",
+	".mp4":  "audio/mp4",
+}
+
+func hasAudioAttachments(attachments []*discordgo.MessageAttachment) bool {
+	for _, att := range attachments {
+		if isAudioMime(att.ContentType, att.Filename) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAudioMime(contentType, filename string) bool {
+	if strings.HasPrefix(contentType, "audio/") {
+		return true
+	}
+	// Discord voice messages may use video/webm or video/ogg container
+	if contentType == "video/webm" || contentType == "video/ogg" {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	_, ok := audioExtensions[ext]
+	return ok
+}
+
+func downloadAudioToFile(url, filename, tmpDir string) (string, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	safeFilename := filepath.Base(filename)
+	localName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), safeFilename)
+	localPath := filepath.Join(tmpDir, localName)
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		return "", fmt.Errorf("create file failed: %w", err)
+	}
+
+	// Whisper API limit is 25MB
+	written, err := io.Copy(f, io.LimitReader(resp.Body, 25*1024*1024+1))
+	if err != nil {
+		f.Close()
+		os.Remove(localPath)
+		return "", fmt.Errorf("write failed: %w", err)
+	}
+	if written > 25*1024*1024 {
+		f.Close()
+		os.Remove(localPath)
+		return "", fmt.Errorf("audio too large (>25MB)")
 	}
 
 	if err := f.Close(); err != nil {

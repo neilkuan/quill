@@ -12,11 +12,12 @@ import (
 // --- Top-level ---
 
 type Config struct {
-	Agent    AgentConfig    `toml:"agent"`
-	Pool     PoolConfig     `toml:"pool"`
-	Discord  DiscordConfig  `toml:"discord"`
-	Telegram TelegramConfig `toml:"telegram"`
-	Teams    TeamsConfig    `toml:"teams"`
+	Agent      AgentConfig      `toml:"agent"`
+	Pool       PoolConfig       `toml:"pool"`
+	Transcribe TranscribeConfig `toml:"transcribe"`
+	Discord    DiscordConfig    `toml:"discord"`
+	Telegram   TelegramConfig   `toml:"telegram"`
+	Teams      TeamsConfig      `toml:"teams"`
 }
 
 // --- Shared ---
@@ -67,6 +68,18 @@ type ReactionTiming struct {
 	ErrorHoldMs int64 `toml:"error_hold_ms"`
 }
 
+// --- Transcribe ---
+
+type TranscribeConfig struct {
+	Enabled  bool   `toml:"enabled"`
+	Provider string `toml:"provider"`
+	APIKey   string `toml:"api_key"`
+	Model    string `toml:"model"`
+	Language string `toml:"language"`
+	Prompt   string `toml:"prompt"`
+	BaseURL  string `toml:"base_url"`
+}
+
 // --- Telegram (stub) ---
 
 type TelegramConfig struct {
@@ -100,6 +113,9 @@ func applyDefaults(cfg *Config) {
 		cfg.Pool.SessionTTLHours = 24
 	}
 
+	// Transcribe
+	applyTranscribeDefaults(&cfg.Transcribe)
+
 	// Discord — if the section is present with a token, default to enabled
 	if cfg.Discord.BotToken != "" && !cfg.Discord.Enabled {
 		cfg.Discord.Enabled = true
@@ -110,6 +126,24 @@ func applyDefaults(cfg *Config) {
 	// Telegram — if the section is present with a token, default to enabled
 	if cfg.Telegram.BotToken != "" && !cfg.Telegram.Enabled {
 		cfg.Telegram.Enabled = true
+	}
+}
+
+func applyTranscribeDefaults(tc *TranscribeConfig) {
+	if tc.APIKey != "" && !tc.Enabled {
+		tc.Enabled = true
+	}
+	if tc.Provider == "" {
+		tc.Provider = "openai"
+	}
+	if tc.Model == "" {
+		tc.Model = "whisper-1"
+	}
+	if tc.Language == "" {
+		tc.Language = "zh"
+	}
+	if tc.Prompt == "" {
+		tc.Prompt = "以下是繁體中文語音的逐字稿："
 	}
 }
 

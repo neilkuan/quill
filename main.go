@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/neilkuan/openab-go/config"
 	"github.com/neilkuan/openab-go/discord"
 	"github.com/neilkuan/openab-go/platform"
+	"github.com/neilkuan/openab-go/transcribe"
 )
 
 var commit = "unknown"
@@ -57,11 +58,29 @@ func main() {
 
 	ttlSecs := int64(cfg.Pool.SessionTTLHours) * 3600
 
+	// Create transcriber if configured
+	var t transcribe.Transcriber
+	if cfg.Transcribe.Enabled {
+		switch cfg.Transcribe.Provider {
+		case "openai":
+			t = transcribe.NewOpenAITranscriber(transcribe.OpenAIConfig{
+				APIKey:   cfg.Transcribe.APIKey,
+				Model:    cfg.Transcribe.Model,
+				Language: cfg.Transcribe.Language,
+				Prompt:   cfg.Transcribe.Prompt,
+				BaseURL:  cfg.Transcribe.BaseURL,
+			})
+			slog.Info("transcriber enabled", "provider", "openai", "model", cfg.Transcribe.Model)
+		default:
+			slog.Warn("unknown transcribe provider, voice transcription disabled", "provider", cfg.Transcribe.Provider)
+		}
+	}
+
 	// Build platforms
 	var platforms []platform.Platform
 
 	if cfg.Discord.Enabled {
-		adapter, err := discord.NewAdapter(cfg.Discord, pool)
+		adapter, err := discord.NewAdapter(cfg.Discord, pool, t)
 		if err != nil {
 			slog.Error("failed to create discord adapter", "error", err)
 			os.Exit(1)

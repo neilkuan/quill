@@ -48,3 +48,13 @@ working_dir = "/home/agent"
 [pool]
 max_sessions = 10
 session_ttl_hours = 24
+
+# Voice transcription (optional)
+# Set api_key to enable voice message transcription via OpenAI Whisper
+# [transcribe]
+# api_key = "${OPENAI_API_KEY}"
+# provider = "openai"
+# model = "whisper-1"
+# language = "zh"
+# prompt = "以下是繁體中文語音的逐字稿："
+# base_url = "https://api.openai.com/v1"
