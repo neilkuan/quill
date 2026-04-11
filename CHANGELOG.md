@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.2.1](https://github.com/neilkuan/openab-go/compare/v0.2.0...v0.2.1) - 2026-04-11
+- docs: add pluggable agent backends table to README by @neilkuan in https://github.com/neilkuan/openab-go/pull/13
+- docs: improve CLAUDE.md with accurate build flags and architecture details by @neilkuan in https://github.com/neilkuan/openab-go/pull/15
+
 ## [v0.2.0](https://github.com/neilkuan/openab-go/compare/v0.1.3...v0.2.0) - 2026-04-11
 - feat: support Discord image attachments via ACP ImageContent blocks by @neilkuan in https://github.com/neilkuan/openab-go/pull/10
 - Release for v0.2.0 by @openab-go-app[bot] in https://github.com/neilkuan/openab-go/pull/11
