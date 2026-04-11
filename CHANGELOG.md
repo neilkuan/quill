@@ -2,6 +2,10 @@
 
 ## [v0.2.0](https://github.com/neilkuan/openab-go/compare/v0.1.3...v0.2.0) - 2026-04-11
 - feat: support Discord image attachments via ACP ImageContent blocks by @neilkuan in https://github.com/neilkuan/openab-go/pull/10
+- Release for v0.2.0 by @openab-go-app[bot] in https://github.com/neilkuan/openab-go/pull/11
+
+## [v0.2.0](https://github.com/neilkuan/openab-go/compare/v0.1.3...v0.2.0) - 2026-04-11
+- feat: support Discord image attachments via ACP ImageContent blocks by @neilkuan in https://github.com/neilkuan/openab-go/pull/10
 
 ## [v0.1.3](https://github.com/neilkuan/openab-go/compare/v0.1.2...v0.1.3) - 2026-04-10
 - chore: switch Docker build cache from GHA to registry by @neilkuan in https://github.com/neilkuan/openab-go/pull/8
