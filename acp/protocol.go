@@ -7,7 +7,7 @@ import (
 // --- Content blocks for prompts ---
 
 // ContentBlock represents a single content element in an ACP prompt.
-// Uses json.RawMessage to support different JSON shapes for text vs image.
+// Uses a flexible map representation to support different JSON shapes for text and image blocks.
 type ContentBlock map[string]interface{}
 
 func TextBlock(text string) ContentBlock {
