@@ -5,8 +5,8 @@
 
 # CI / tooling
 .claude
-.tagpr
 .tmp
+scripts/
 
 # Documentation
 *.md

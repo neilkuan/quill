@@ -96,4 +96,4 @@ Chat message → Platform Adapter → SessionPool → AcpConnection (stdin/stdou
 
 ### Releasing
 
-Releases use [tagpr](https://github.com/Songmu/tagpr). Version lives in `VERSION` file. Pre-release tags (`v0.2.1-rc.1`) trigger CI image builds; merging the tagpr Release PR promotes the tested image without rebuilding. Images are published to GHCR in four variants (see Docker section).
+Releases use `scripts/release.sh`. Version lives in `VERSION` file. Run `./scripts/release.sh` to auto-open a Release PR (or CI does it on push to main via `release.yml`). Run `./scripts/release.sh --rc` to create RC tags that trigger CI image builds. Merging the Release PR triggers `tag-on-merge.yml` which auto-creates a stable tag, promoting the tested image without rebuilding. Images are published to GHCR in four variants (see Docker section).

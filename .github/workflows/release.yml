@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (e.g., 0.4.0). Leave empty for auto-detect."
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check for new commits since last tag
+        id: check
+        run: |
+          LAST_TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vE '-' | head -1)
+          if [ -n "$LAST_TAG" ]; then
+            COUNT=$(git rev-list "${LAST_TAG}..HEAD" --count)
+            echo "commits=$COUNT" >> "$GITHUB_OUTPUT"
+            echo "Last stable tag: $LAST_TAG, commits since: $COUNT"
+          else
+            echo "commits=999" >> "$GITHUB_OUTPUT"
+            echo "No stable tag found, treating as first release"
+          fi
+
+      - name: Check for existing Release PR
+        if: steps.check.outputs.commits != '0'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN=$(gh pr list --base main --state open --json headRefName --jq '.[].headRefName' | grep '^release/' || true)
+          if [ -n "$OPEN" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release PR already open: $OPEN"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Release PR
+        if: steps.check.outputs.commits != '0' && steps.existing.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          ARGS=""
+          if [ -n "${{ inputs.version }}" ]; then
+            ARGS="--version ${{ inputs.version }}"
+          fi
+
+          ./scripts/release.sh $ARGS

@@ -1,0 +1,39 @@
+name: Tag on Release PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create stable tag
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          TAG="v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          echo "Created and pushed tag: $TAG"
+          echo "This will trigger the Build & Release workflow."
