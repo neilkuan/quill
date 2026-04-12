@@ -46,3 +46,13 @@ jobs:
           git push origin "$VERSION"
 
           echo "::notice::Tagged ${VERSION}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          VERSION="${GITHUB_HEAD_REF#release/}"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes \
+            --latest
