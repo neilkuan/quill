@@ -18,14 +18,18 @@ import (
 	"github.com/neilkuan/openab-go/command"
 	"github.com/neilkuan/openab-go/config"
 	"github.com/neilkuan/openab-go/platform"
-	"github.com/neilkuan/openab-go/transcribe"
+	"github.com/neilkuan/openab-go/stt"
+	"github.com/neilkuan/openab-go/tts"
 )
 
 type Handler struct {
 	Pool            *acp.SessionPool
 	AllowedChannels map[string]bool
 	ReactionsConfig config.ReactionsConfig
-	Transcriber     transcribe.Transcriber
+	Transcriber     stt.Transcriber
+	Synthesizer     tts.Synthesizer
+	VoiceStore      *tts.VoiceStore
+	TTSConfig       config.TTSConfig
 }
 
 func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -128,9 +132,9 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	var transcriptions []string
 	if hasAudio {
 		if h.Transcriber == nil {
-			slog.Warn("voice message received but [transcribe] is not configured, skipping audio")
+			slog.Warn("voice message received but [stt] is not configured, skipping audio")
 			if prompt == "" && !hasImages {
-				s.ChannelMessageSend(m.ChannelID, "⚠️ Voice transcription is not configured. Please set up `[transcribe]` in config.")
+				s.ChannelMessageSend(m.ChannelID, "⚠️ Voice transcription is not configured. Please set up `[stt]` in config.")
 				return
 			}
 		} else {
@@ -153,6 +157,23 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 					}
 					slog.Debug("downloaded audio", "filename", att.Filename, "path", localPath)
 
+					// Handle "setvoice" command: create custom voice via OpenAI API
+					if strings.EqualFold(strings.TrimSpace(prompt), "setvoice") && h.VoiceStore != nil && h.Synthesizer != nil {
+						voiceID, createErr := h.Synthesizer.CreateVoice(m.Author.Username, localPath)
+						os.Remove(localPath)
+						if createErr != nil {
+							s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Failed to create voice: %v", createErr))
+						} else {
+							if sErr := h.VoiceStore.SetVoice(m.Author.ID, voiceID); sErr != nil {
+								s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Voice created but failed to save: %v", sErr))
+							} else {
+								s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Your custom voice has been created! (ID: `%s`)", voiceID))
+							}
+						}
+						return
+					}
+
+					slog.Info("🎙️ stt: transcribing voice message", "filename", att.Filename, "user", m.Author.Username)
 					text, err := h.Transcriber.Transcribe(localPath)
 					if removeErr := os.Remove(localPath); removeErr != nil {
 						slog.Debug("failed to remove tmp audio", "path", localPath, "error", removeErr)
@@ -210,7 +231,7 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	)
 	reactions.SetQueued()
 
-	result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions)
+	finalText, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions)
 
 	// Cleanup downloaded images
 	for _, p := range imagePaths {
@@ -223,6 +244,11 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		reactions.SetDone()
 	} else {
 		reactions.SetError()
+	}
+
+	// TTS: synthesize voice reply only when the user sent a voice message
+	if result == nil && h.Synthesizer != nil && finalText != "" && hasAudio {
+		go h.sendVoiceReply(s, threadID, m.Author.ID, finalText)
 	}
 
 	// Hold emoji briefly then clear
@@ -261,6 +287,30 @@ var slashCommands = []*discordgo.ApplicationCommand{
 		Name:        "reset",
 		Description: "Reset the current session (kills agent, fresh start on next message)",
 	},
+	{
+		Name:        "setvoice",
+		Description: "Set your custom bot voice (attach a 3-10s audio file)",
+	},
+	{
+		Name:        "voice-clear",
+		Description: "Clear your custom voice, revert to default",
+	},
+	{
+		Name:        "voicemode",
+		Description: "Set voice reply mode: echo (use your voice) or default",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "mode",
+				Description: "echo = bot uses your voice, default = normal",
+				Required:    true,
+				Choices: []*discordgo.ApplicationCommandOptionChoice{
+					{Name: "echo", Value: "echo"},
+					{Name: "default", Value: "default"},
+				},
+			},
+		},
+	},
 }
 
 func (h *Handler) registerSlashCommands(s *discordgo.Session, appID string) {
@@ -279,6 +329,12 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	}
 
 	data := i.ApplicationCommandData()
+	userID := ""
+	if i.Member != nil {
+		userID = i.Member.User.ID
+	} else if i.User != nil {
+		userID = i.User.ID
+	}
 	var response string
 
 	switch data.Name {
@@ -286,10 +342,22 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 		response = command.ExecuteSessions(h.Pool)
 	case command.CmdInfo:
 		threadKey := buildSessionKey(i.ChannelID)
-		response = command.ExecuteInfo(h.Pool, threadKey)
+		response = command.ExecuteInfo(h.Pool, threadKey, h.buildVoiceInfo(userID))
 	case command.CmdReset:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteReset(h.Pool, threadKey)
+	case command.CmdSetVoice:
+		response = h.handleSetVoice(s, i, userID)
+	case command.CmdVoiceClear:
+		response = h.handleVoiceClear(userID)
+	case command.CmdVoiceMode:
+		mode := ""
+		for _, opt := range data.Options {
+			if opt.Name == "mode" {
+				mode = opt.StringValue()
+			}
+		}
+		response = h.handleVoiceMode(userID, mode)
 	default:
 		return
 	}
@@ -310,8 +378,9 @@ func streamPrompt(
 	channelID string,
 	msgID string,
 	reactions *StatusReactionController,
-) error {
-	return pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
+) (string, error) {
+	var finalText string
+	err := pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
 		reset := conn.SessionReset
 		conn.SessionReset = false
 
@@ -429,7 +498,8 @@ func streamPrompt(
 		}
 
 		// Final edit
-		finalContent := composeDisplay(toolLines, textBuf.String())
+		finalText = textBuf.String()
+		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
 			finalContent = "_(no response)_"
 		}
@@ -445,6 +515,7 @@ func streamPrompt(
 
 		return nil
 	})
+	return finalText, err
 }
 
 func buildSessionKey(threadID string) string {
@@ -498,6 +569,97 @@ func getOrCreateThread(s *discordgo.Session, msg *discordgo.Message, prompt stri
 	}
 
 	return thread.ID, nil
+}
+
+// --- Voice command handlers ---
+
+func (h *Handler) handleSetVoice(s *discordgo.Session, i *discordgo.InteractionCreate, userID string) string {
+	if h.VoiceStore == nil || h.Synthesizer == nil {
+		return "TTS is not configured."
+	}
+
+	// Discord slash commands don't natively support file attachments.
+	// Guide the user to send audio + "setvoice" as a regular message.
+	return "To set your voice: send a voice/audio message with the text `setvoice`.\n" +
+		"The bot will upload it to OpenAI and create your custom voice."
+}
+
+func (h *Handler) handleVoiceClear(userID string) string {
+	if h.VoiceStore == nil {
+		return "TTS is not configured."
+	}
+	if err := h.VoiceStore.RemoveVoice(userID); err != nil {
+		return fmt.Sprintf("Failed to clear voice: %v", err)
+	}
+	return "Your custom voice has been cleared. Bot will use the default voice."
+}
+
+func (h *Handler) handleVoiceMode(userID, mode string) string {
+	if h.VoiceStore == nil {
+		return "TTS is not configured."
+	}
+	switch mode {
+	case "echo":
+		h.VoiceStore.SetEchoMode(userID, true)
+		return "Voice mode set to **echo** — bot will reply using your voice."
+	case "default":
+		h.VoiceStore.SetEchoMode(userID, false)
+		return "Voice mode set to **default** — bot will use the configured voice."
+	default:
+		return "Unknown mode. Use `echo` or `default`."
+	}
+}
+
+// sendVoiceReply synthesizes and sends a voice message.
+// Uses per-user custom voice if set, otherwise default voice.
+func (h *Handler) sendVoiceReply(s *discordgo.Session, channelID, userID, text string) {
+	var audioPath string
+	var err error
+
+	// Priority: per-user custom voice → default configured voice
+	voice := h.TTSConfig.Voice
+	if h.VoiceStore != nil {
+		if voiceID := h.VoiceStore.GetVoice(userID); voiceID != "" {
+			voice = voiceID
+			audioPath, err = h.Synthesizer.SynthesizeWithVoice(text, voiceID)
+		}
+	}
+	if audioPath == "" && err == nil {
+		audioPath, err = h.Synthesizer.Synthesize(text)
+	}
+	slog.Info("🔊 tts: synthesizing voice reply", "user", userID, "voice", voice, "text_length", len(text))
+	if err != nil {
+		slog.Error("tts synthesis failed", "error", err)
+		return
+	}
+	defer os.Remove(audioPath)
+
+	f, err := os.Open(audioPath)
+	if err != nil {
+		slog.Error("failed to open tts audio", "error", err)
+		return
+	}
+	defer f.Close()
+
+	if _, err := s.ChannelFileSend(channelID, "voice_reply.mp3", f); err != nil {
+		slog.Error("failed to send tts voice", "error", err)
+	}
+}
+
+func (h *Handler) buildVoiceInfo(userID string) *command.VoiceInfo {
+	vi := &command.VoiceInfo{
+		STTEnabled: h.Transcriber != nil,
+		TTSEnabled: h.Synthesizer != nil,
+		TTSModel:   h.TTSConfig.Model,
+		TTSVoice:   h.TTSConfig.Voice,
+	}
+	if h.Transcriber != nil {
+		vi.STTProvider = "openai"
+	}
+	if h.VoiceStore != nil && userID != "" {
+		vi.CustomVoice = h.VoiceStore.GetVoice(userID)
+	}
+	return vi
 }
 
 // --- Prompt content builder ---

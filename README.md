@@ -88,12 +88,12 @@ enabled = true
 remove_after_reply = false
 ```
 
-##### Voice Transcription (Optional)
+##### STT — Speech-to-Text (Optional)
 
-To enable voice message support, add a `[transcribe]` section with an OpenAI API key:
+To enable voice message support, add a `[stt]` section with an OpenAI API key:
 
 ```toml
-[transcribe]
+[stt]
 api_key = "${OPENAI_API_KEY}"
 # provider = "openai"       # default
 # model = "whisper-1"       # default
@@ -102,6 +102,33 @@ api_key = "${OPENAI_API_KEY}"
 ```
 
 When configured, voice messages (Discord & Telegram) are automatically transcribed and sent to the agent as text. Without this config, voice-only messages return a warning to the user.
+
+##### TTS — Text-to-Speech (Optional)
+
+To enable voice replies, add a `[tts]` section with an OpenAI API key:
+
+```toml
+[tts]
+api_key = "${OPENAI_API_KEY}"
+# model = "tts-1"           # or "tts-1-hd", "gpt-4o-mini-tts"
+# voice = "nova"            # alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar
+# voice_gender = "female"   # "female" (default, nova) or "male" (ash) — used when voice is not set
+```
+
+When configured, the bot sends a voice message alongside text replies when the user sends a voice message. Powered by OpenAI TTS API.
+
+##### Voice Pricing (OpenAI)
+
+| Service | Model | Price |
+|---------|-------|-------|
+| **STT** | `whisper-1` | $0.006 / min |
+| **STT** | `gpt-4o-mini-transcribe` | $0.003 / min |
+| **STT** | `gpt-4o-transcribe` | $0.006 / min |
+| **TTS** | `tts-1` | $15.00 / 1M chars |
+| **TTS** | `tts-1-hd` | $30.00 / 1M chars |
+| **TTS** | `gpt-4o-mini-tts` | $0.015 / min |
+
+A typical chatbot voice reply (~300 chars) costs about **$0.0045** with `tts-1`. Pricing as of 2026, see [OpenAI pricing](https://openai.com/api/pricing/) for latest.
 
 See [`config.toml.example`](config.toml.example) for the full reference including alternative agents (Claude, Codex, Gemini).
 
@@ -229,8 +256,10 @@ openab-go/
 │   └── command.go       # Bot command parsing and execution (sessions/reset/info)
 ├── api/
 │   └── server.go        # HTTP API server for session monitoring
-├── transcribe/
-│   └── transcribe.go    # Transcriber interface, OpenAI Whisper implementation
+├── stt/
+│   └── stt.go           # Transcriber interface, OpenAI Whisper implementation
+├── tts/
+│   └── openai.go        # Synthesizer interface, OpenAI TTS implementation
 ├── discord/
 │   ├── adapter.go       # Discord platform adapter (implements Platform interface)
 │   ├── handler.go       # Discord message handler, thread creation, edit streaming

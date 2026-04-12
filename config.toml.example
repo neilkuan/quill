@@ -78,12 +78,21 @@ session_ttl_hours = 24
 # enabled = true
 # listen = ":8080"
 
-# Voice transcription (optional)
+# STT - Speech-to-Text (optional)
 # Set api_key to enable voice message transcription via OpenAI Whisper
-# [transcribe]
+# [stt]
 # api_key = "${OPENAI_API_KEY}"
 # provider = "openai"
 # model = "whisper-1"
 # language = "zh"
 # prompt = "以下是繁體中文語音的逐字稿："
+# base_url = "https://api.openai.com/v1"
+
+# TTS - Text-to-Speech (optional)
+# Bot replies with voice when user sends a voice message.
+# Uses OpenAI TTS API (same API key as STT).
+# [tts]
+# api_key = "${OPENAI_API_KEY}"
+# model = "tts-1"              # or "tts-1-hd" for higher quality
+# voice = "alloy"              # alloy, echo, fable, onyx, nova, shimmer
 # base_url = "https://api.openai.com/v1"

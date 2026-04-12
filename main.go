@@ -14,7 +14,8 @@ import (
 	"github.com/neilkuan/openab-go/discord"
 	"github.com/neilkuan/openab-go/platform"
 	"github.com/neilkuan/openab-go/telegram"
-	"github.com/neilkuan/openab-go/transcribe"
+	"github.com/neilkuan/openab-go/stt"
+	"github.com/neilkuan/openab-go/tts"
 )
 
 var commit = "unknown"
@@ -60,21 +61,40 @@ func main() {
 
 	ttlSecs := int64(cfg.Pool.SessionTTLHours) * 3600
 
-	// Create transcriber if configured
-	var t transcribe.Transcriber
-	if cfg.Transcribe.Enabled {
-		switch cfg.Transcribe.Provider {
+	// Create STT (speech-to-text) if configured
+	var t stt.Transcriber
+	if cfg.STT.Enabled {
+		switch cfg.STT.Provider {
 		case "openai":
-			t = transcribe.NewOpenAITranscriber(transcribe.OpenAIConfig{
-				APIKey:   cfg.Transcribe.APIKey,
-				Model:    cfg.Transcribe.Model,
-				Language: cfg.Transcribe.Language,
-				Prompt:   cfg.Transcribe.Prompt,
-				BaseURL:  cfg.Transcribe.BaseURL,
+			t = stt.NewOpenAITranscriber(stt.OpenAIConfig{
+				APIKey:   cfg.STT.APIKey,
+				Model:    cfg.STT.Model,
+				Language: cfg.STT.Language,
+				Prompt:   cfg.STT.Prompt,
+				BaseURL:  cfg.STT.BaseURL,
 			})
-			slog.Info("🎙️transcriber enabled", "provider", "openai", "model", cfg.Transcribe.Model)
+			slog.Info("🎙️ stt enabled", "provider", "openai", "model", cfg.STT.Model, "language", cfg.STT.Language)
 		default:
-			slog.Warn("unknown transcribe provider, voice transcription disabled", "provider", cfg.Transcribe.Provider)
+			slog.Warn("unknown stt provider, voice transcription disabled", "provider", cfg.STT.Provider)
+		}
+	}
+
+	// Create TTS (text-to-speech) synthesizer if configured
+	var synth tts.Synthesizer
+	var voiceStore *tts.VoiceStore
+	if cfg.TTS.Enabled {
+		synth = tts.NewOpenAISynthesizer(tts.OpenAIConfig{
+			APIKey:     cfg.TTS.APIKey,
+			Model:      cfg.TTS.Model,
+			Voice:      cfg.TTS.Voice,
+			BaseURL:    cfg.TTS.BaseURL,
+			TimeoutSec: cfg.TTS.TimeoutSec,
+		})
+		slog.Info("🔊 tts enabled", "model", cfg.TTS.Model, "voice", cfg.TTS.Voice, "voice_gender", cfg.TTS.VoiceGender)
+		var err error
+		voiceStore, err = tts.NewVoiceStore(cfg.Agent.WorkingDir)
+		if err != nil {
+			slog.Warn("failed to create voice store, per-user voices disabled", "error", err)
 		}
 	}
 
@@ -82,7 +102,7 @@ func main() {
 	var platforms []platform.Platform
 
 	if cfg.Discord.Enabled {
-		adapter, err := discord.NewAdapter(cfg.Discord, pool, t)
+		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, voiceStore, cfg.TTS)
 		if err != nil {
 			slog.Error("failed to create discord adapter", "error", err)
 			os.Exit(1)
@@ -92,7 +112,7 @@ func main() {
 	}
 
 	if cfg.Telegram.Enabled {
-		adapter, err := telegram.NewAdapter(cfg.Telegram, pool, t)
+		adapter, err := telegram.NewAdapter(cfg.Telegram, pool, t, synth, voiceStore, cfg.TTS)
 		if err != nil {
 			slog.Error("failed to create telegram adapter", "error", err)
 			os.Exit(1)

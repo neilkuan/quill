@@ -274,7 +274,7 @@ command = "echo"
 	}
 }
 
-func TestLoadConfig_TranscribeDefaults(t *testing.T) {
+func TestLoadConfig_STTDefaults(t *testing.T) {
 	content := `
 [discord]
 bot_token = "t"
@@ -289,24 +289,24 @@ command = "echo"
 	}
 
 	// No API key → not enabled
-	if cfg.Transcribe.Enabled {
-		t.Fatal("expected transcribe disabled when no api_key is set")
+	if cfg.STT.Enabled {
+		t.Fatal("expected stt disabled when no api_key is set")
 	}
-	if cfg.Transcribe.Provider != "openai" {
-		t.Fatalf("expected default provider 'openai', got %q", cfg.Transcribe.Provider)
+	if cfg.STT.Provider != "openai" {
+		t.Fatalf("expected default provider 'openai', got %q", cfg.STT.Provider)
 	}
-	if cfg.Transcribe.Model != "whisper-1" {
-		t.Fatalf("expected default model 'whisper-1', got %q", cfg.Transcribe.Model)
+	if cfg.STT.Model != "whisper-1" {
+		t.Fatalf("expected default model 'whisper-1', got %q", cfg.STT.Model)
 	}
-	if cfg.Transcribe.Language != "zh" {
-		t.Fatalf("expected default language 'zh', got %q", cfg.Transcribe.Language)
+	if cfg.STT.Language != "zh" {
+		t.Fatalf("expected default language 'zh', got %q", cfg.STT.Language)
 	}
-	if cfg.Transcribe.Prompt == "" {
+	if cfg.STT.Prompt == "" {
 		t.Fatal("expected non-empty default prompt")
 	}
 }
 
-func TestLoadConfig_TranscribeEnabled(t *testing.T) {
+func TestLoadConfig_STTEnabled(t *testing.T) {
 	content := `
 [discord]
 bot_token = "t"
@@ -314,7 +314,7 @@ bot_token = "t"
 [agent]
 command = "echo"
 
-[transcribe]
+[stt]
 api_key = "sk-test-key"
 model = "whisper-large-v3"
 language = "zh"
@@ -326,21 +326,21 @@ prompt = "custom prompt"
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if !cfg.Transcribe.Enabled {
-		t.Fatal("expected transcribe enabled when api_key is set")
+	if !cfg.STT.Enabled {
+		t.Fatal("expected stt enabled when api_key is set")
 	}
-	if cfg.Transcribe.APIKey != "sk-test-key" {
-		t.Fatalf("expected api_key 'sk-test-key', got %q", cfg.Transcribe.APIKey)
+	if cfg.STT.APIKey != "sk-test-key" {
+		t.Fatalf("expected api_key 'sk-test-key', got %q", cfg.STT.APIKey)
 	}
-	if cfg.Transcribe.Model != "whisper-large-v3" {
-		t.Fatalf("expected model 'whisper-large-v3', got %q", cfg.Transcribe.Model)
+	if cfg.STT.Model != "whisper-large-v3" {
+		t.Fatalf("expected model 'whisper-large-v3', got %q", cfg.STT.Model)
 	}
-	if cfg.Transcribe.Prompt != "custom prompt" {
-		t.Fatalf("expected prompt 'custom prompt', got %q", cfg.Transcribe.Prompt)
+	if cfg.STT.Prompt != "custom prompt" {
+		t.Fatalf("expected prompt 'custom prompt', got %q", cfg.STT.Prompt)
 	}
 }
 
-func TestLoadConfig_TranscribeEnvExpansion(t *testing.T) {
+func TestLoadConfig_STTEnvExpansion(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-from-env")
 
 	content := `
@@ -350,7 +350,7 @@ bot_token = "t"
 [agent]
 command = "echo"
 
-[transcribe]
+[stt]
 api_key = "${OPENAI_API_KEY}"
 `
 	path := writeTempConfig(t, content)
@@ -359,15 +359,15 @@ api_key = "${OPENAI_API_KEY}"
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.Transcribe.APIKey != "sk-from-env" {
-		t.Fatalf("expected env-expanded api_key 'sk-from-env', got %q", cfg.Transcribe.APIKey)
+	if cfg.STT.APIKey != "sk-from-env" {
+		t.Fatalf("expected env-expanded api_key 'sk-from-env', got %q", cfg.STT.APIKey)
 	}
-	if !cfg.Transcribe.Enabled {
-		t.Fatal("expected transcribe enabled after env expansion")
+	if !cfg.STT.Enabled {
+		t.Fatal("expected stt enabled after env expansion")
 	}
 }
 
-func TestLoadConfig_TranscribeCustomBaseURL(t *testing.T) {
+func TestLoadConfig_STTCustomBaseURL(t *testing.T) {
 	content := `
 [discord]
 bot_token = "t"
@@ -375,7 +375,7 @@ bot_token = "t"
 [agent]
 command = "echo"
 
-[transcribe]
+[stt]
 api_key = "sk-test"
 base_url = "https://custom.openai.com/v1"
 `
@@ -385,8 +385,8 @@ base_url = "https://custom.openai.com/v1"
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.Transcribe.BaseURL != "https://custom.openai.com/v1" {
-		t.Fatalf("expected custom base_url, got %q", cfg.Transcribe.BaseURL)
+	if cfg.STT.BaseURL != "https://custom.openai.com/v1" {
+		t.Fatalf("expected custom base_url, got %q", cfg.STT.BaseURL)
 	}
 }
 
@@ -455,6 +455,94 @@ done = "🎉"
 	// Non-overridden should get defaults
 	if r.Emojis.Thinking != "🤔" {
 		t.Fatalf("expected default thinking '🤔', got %q", r.Emojis.Thinking)
+	}
+}
+
+func TestLoadConfig_TTSDefaults(t *testing.T) {
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.TTS.Enabled {
+		t.Fatal("expected tts disabled when no api_key is set")
+	}
+	if cfg.TTS.Model != "tts-1" {
+		t.Fatalf("expected default model 'tts-1', got %q", cfg.TTS.Model)
+	}
+	if cfg.TTS.VoiceGender != "female" {
+		t.Fatalf("expected default voice_gender 'female', got %q", cfg.TTS.VoiceGender)
+	}
+	if cfg.TTS.Voice != "nova" {
+		t.Fatalf("expected default voice 'nova' (female), got %q", cfg.TTS.Voice)
+	}
+}
+
+func TestLoadConfig_TTSEnabled(t *testing.T) {
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+
+[tts]
+api_key = "sk-test"
+model = "tts-1-hd"
+voice = "nova"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if !cfg.TTS.Enabled {
+		t.Fatal("expected tts enabled when api_key is set")
+	}
+	if cfg.TTS.APIKey != "sk-test" {
+		t.Fatalf("expected api_key 'sk-test', got %q", cfg.TTS.APIKey)
+	}
+	if cfg.TTS.Model != "tts-1-hd" {
+		t.Fatalf("expected model 'tts-1-hd', got %q", cfg.TTS.Model)
+	}
+	if cfg.TTS.Voice != "nova" {
+		t.Fatalf("expected voice 'nova', got %q", cfg.TTS.Voice)
+	}
+}
+
+func TestLoadConfig_TTSEnvExpansion(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-from-env")
+
+	content := `
+[discord]
+bot_token = "t"
+
+[agent]
+command = "echo"
+
+[tts]
+api_key = "${OPENAI_API_KEY}"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.TTS.APIKey != "sk-from-env" {
+		t.Fatalf("expected env-expanded api_key, got %q", cfg.TTS.APIKey)
+	}
+	if !cfg.TTS.Enabled {
+		t.Fatal("expected tts enabled after env expansion")
 	}
 }
 
