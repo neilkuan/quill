@@ -31,17 +31,19 @@ Version bump is auto-detected from conventional commits:
   PR merged to main
         │
         ▼
-  ┌──────────────────────┐     ┌──────────────────────┐
-  │ release.yml          │────>│ Release PR            │
-  │ (auto or manual)     │     │ (bumps VERSION)       │
-  └──────────────────────┘     └──────────────────────┘
+  ┌──────────────────────┐     ┌──────────────────────────────┐
+  │ release.yml          │────>│ Release PR                   │
+  │ (auto or manual)     │     │ (branch: release/v0.4.1)     │
+  └──────────────────────┘     │ (only changes VERSION file)  │
+                               └──────────────────────────────┘
 
+  git checkout release/v0.4.1
   ./scripts/release.sh --rc
         │
         ▼
   ┌─────────────┐     ┌──────────────────┐
   │ Creates tag │────>│ build.yml        │
-  │ v0.4.0-rc.1│     │ (full build)     │
+  │ v0.4.1-rc.1│     │ (full build)     │
   └─────────────┘     └──────────────────┘
         │
         ▼
@@ -52,7 +54,7 @@ Version bump is auto-detected from conventional commits:
         ▼
   ┌──────────────────┐     ┌──────────────────────────────┐
   │ tag-on-merge.yml │────>│ build.yml                    │
-  │ tags v0.4.0      │     │ (promote, no rebuild)        │
+  │ tags v0.4.1      │     │ (promote, no rebuild)        │
   └──────────────────┘     └──────────────────────────────┘
         │
         ▼
@@ -62,18 +64,18 @@ Version bump is auto-detected from conventional commits:
 ## Step by Step
 
 1. **Develop** — merge feature/fix PRs to `main` as usual
-2. **Release PR** — `release.yml` auto-opens a Release PR on push to main (or run `./scripts/release.sh` locally). This PR only changes the `VERSION` file — no code changes.
-3. **RC tag** — on your local machine, checkout main and pull the latest:
+2. **Release PR** — `release.yml` auto-opens a Release PR on push to main (or run `./scripts/release.sh` locally). This PR only changes the `VERSION` file — no code changes. The branch is named `release/v0.4.1`.
+3. **RC tag** — checkout the release branch and create an RC tag:
    ```bash
-   git checkout main
-   git pull
+   git fetch origin
+   git checkout release/v0.4.1
    ./scripts/release.sh --rc
    ```
-   This tags the current `main` HEAD (i.e., the commit that contains your feature/fix code) and pushes the tag, triggering a full Docker build via `build.yml`.
+   This creates `v0.4.1-rc.1` on the release branch (where VERSION is already bumped to `0.4.1`) and pushes the tag, triggering a full Docker build via `build.yml`. If you need another RC, run `--rc` again to get `rc.2`, `rc.3`, etc.
 4. **Test** — verify the RC images work correctly
-5. **Ship** — merge the Release PR on GitHub → `tag-on-merge.yml` auto-creates stable tag `v0.4.0` → `build.yml` promotes the RC image to stable (no rebuild)
+5. **Ship** — merge the Release PR on GitHub → `tag-on-merge.yml` auto-creates stable tag `v0.4.1` → `build.yml` promotes the RC image to stable (no rebuild)
 
-> **Why does the RC tag go on main?** The Release PR only bumps the VERSION number — it contains zero code changes. The actual code you want to release is already on `main` after step 1. The stable release simply re-tags the already-tested RC image, so the code in the RC image and the stable image is identical.
+> **Why checkout the release branch for RC?** The `VERSION` file is bumped on the release branch (e.g., `0.4.0` → `0.4.1`), so `--rc` reads the correct version from there. The release branch only contains the VERSION bump — no code changes — so the built image is functionally identical to main.
 
 ## Image Tags
 

@@ -222,8 +222,8 @@ openab-go/
 
 Releases follow a **"what you tested is what you ship"** philosophy using `scripts/release.sh`:
 
-1. **Merge PRs to main** → `release.yml` auto-opens a Release PR (bumps `VERSION`)
-2. **Create RC tag** → `./scripts/release.sh --rc` → full build of 4 image variants x 2 platforms
+1. **Merge PRs to main** → `release.yml` auto-opens a Release PR (`release/v0.4.1`, only bumps `VERSION`)
+2. **Create RC tag** → checkout release branch → `./scripts/release.sh --rc` → full build of 4 image variants x 2 platforms
 3. **Merge the Release PR** → `tag-on-merge.yml` auto-tags stable → promotes pre-release images (no rebuild)
 
 See [RELEASING.md](RELEASING.md) for the full workflow.
