@@ -25,7 +25,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check if this push is a Release PR merge (skip if so)
+        id: skip
+        run: |
+          HEAD_MSG=$(git log -1 --format=%s)
+          if echo "$HEAD_MSG" | grep -qE '^Merge pull request .* from .*/release/v'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping: this push is a Release PR merge ($HEAD_MSG)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check for new commits since last tag
+        if: steps.skip.outputs.skip != 'true'
         id: check
         run: |
           LAST_TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vE '-' | head -1)
@@ -39,7 +51,7 @@ jobs:
           fi
 
       - name: Check for existing Release PR
-        if: steps.check.outputs.commits != '0'
+        if: steps.skip.outputs.skip != 'true' && steps.check.outputs.commits != '0'
         id: existing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -53,7 +65,7 @@ jobs:
           fi
 
       - name: Create Release PR
-        if: steps.check.outputs.commits != '0' && steps.existing.outputs.skip != 'true'
+        if: steps.skip.outputs.skip != 'true' && steps.check.outputs.commits != '0' && steps.existing.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
