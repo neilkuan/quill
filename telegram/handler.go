@@ -94,12 +94,6 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 		prompt = strings.TrimSpace(prompt)
 	}
 
-	// Check for bot commands (sessions, reset, info)
-	if cmd, ok := command.ParseCommand(prompt); ok {
-		h.handleCommand(chatID, msg.MessageID, cmd)
-		return
-	}
-
 	hasPhoto := len(msg.Photo) > 0
 	hasVoice := msg.Voice != nil
 	hasAudio := msg.Audio != nil

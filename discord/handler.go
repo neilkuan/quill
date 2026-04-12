@@ -72,12 +72,6 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		prompt = strings.TrimSpace(prompt)
 	}
 
-	// Check for bot commands (sessions, reset, info)
-	if cmd, ok := command.ParseCommand(prompt); ok {
-		h.handleCommand(s, m, cmd)
-		return
-	}
-
 	hasImages := len(m.Attachments) > 0 && hasImageAttachments(m.Attachments)
 	hasAudio := len(m.Attachments) > 0 && hasAudioAttachments(m.Attachments)
 	if prompt == "" && !hasImages && !hasAudio {
@@ -245,28 +239,6 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	if result != nil {
 		s.ChannelMessageEdit(threadID, thinkingMsg.ID, fmt.Sprintf("⚠️ %v", result))
-	}
-}
-
-func (h *Handler) handleCommand(s *discordgo.Session, m *discordgo.MessageCreate, cmd *command.Command) {
-	var response string
-
-	switch cmd.Name {
-	case command.CmdSessions:
-		response = command.ExecuteSessions(h.Pool)
-	case command.CmdInfo:
-		threadKey := buildSessionKey(m.ChannelID)
-		response = command.ExecuteInfo(h.Pool, threadKey)
-	case command.CmdReset:
-		threadKey := buildSessionKey(m.ChannelID)
-		response = command.ExecuteReset(h.Pool, threadKey)
-	default:
-		return
-	}
-
-	chunks := platform.SplitMessage(response, 2000)
-	for _, chunk := range chunks {
-		s.ChannelMessageSend(m.ChannelID, chunk)
 	}
 }
 
