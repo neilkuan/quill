@@ -5,35 +5,44 @@ on:
     types: [closed]
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   tag:
     if: >-
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.head.ref, 'release/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
-      - name: Create stable tag
+      - name: Create and push tag
         run: |
-          VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG="v${VERSION}"
+          # release/v0.4.1 → v0.4.1
+          VERSION="${GITHUB_HEAD_REF#release/}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Invalid version format '${VERSION}'. Expected v{major}.{minor}.{patch}"
+            exit 1
+          fi
 
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists, skipping"
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "openab-go-app[bot]"
+          git config user.email "openab-go-app[bot]@users.noreply.github.com"
 
-          git tag "$TAG"
-          git push origin "$TAG"
+          git tag "$VERSION"
+          git push origin "$VERSION"
 
-          echo "Created and pushed tag: $TAG"
-          echo "This will trigger the Build & Release workflow."
+          echo "::notice::Tagged ${VERSION}"
