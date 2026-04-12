@@ -9,9 +9,12 @@ import (
 )
 
 const (
-	CmdSessions = "sessions"
-	CmdReset    = "reset"
-	CmdInfo     = "info"
+	CmdSessions   = "sessions"
+	CmdReset      = "reset"
+	CmdInfo       = "info"
+	CmdSetVoice   = "setvoice"
+	CmdVoiceClear = "voice-clear"
+	CmdVoiceMode  = "voicemode"
 )
 
 type Command struct {
@@ -28,7 +31,11 @@ func ParseCommand(text string) (*Command, bool) {
 	}
 
 	name := strings.ToLower(parts[0])
-	if name != CmdSessions && name != CmdReset && name != CmdInfo {
+	known := map[string]bool{
+		CmdSessions: true, CmdReset: true, CmdInfo: true,
+		CmdSetVoice: true, CmdVoiceClear: true, CmdVoiceMode: true,
+	}
+	if !known[name] {
 		return nil, false
 	}
 
@@ -75,8 +82,19 @@ func ExecuteSessions(pool *acp.SessionPool) string {
 	return sb.String()
 }
 
+// VoiceInfo holds voice feature status for display.
+type VoiceInfo struct {
+	STTEnabled  bool
+	STTProvider string
+	STTModel    string
+	TTSEnabled  bool
+	TTSModel    string
+	TTSVoice    string
+	CustomVoice string // per-user custom voice ID, if set
+}
+
 // ExecuteInfo returns detailed info for a specific session.
-func ExecuteInfo(pool *acp.SessionPool, threadKey string) string {
+func ExecuteInfo(pool *acp.SessionPool, threadKey string, voice *VoiceInfo) string {
 	info, err := pool.GetSessionInfo(threadKey)
 	if err != nil {
 		return fmt.Sprintf("No active session for this thread.")
@@ -87,7 +105,8 @@ func ExecuteInfo(pool *acp.SessionPool, threadKey string) string {
 		status = "Dead"
 	}
 
-	return fmt.Sprintf(
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(
 		"**Session Info**\n"+
 			"Thread: `%s`\n"+
 			"Session ID: `%s`\n"+
@@ -101,7 +120,27 @@ func ExecuteInfo(pool *acp.SessionPool, threadKey string) string {
 		formatDuration(time.Since(info.CreatedAt)),
 		formatDuration(time.Since(info.LastActive)),
 		info.MessageCount,
-	)
+	))
+
+	if voice != nil {
+		sb.WriteString("\n\n**Voice**\n")
+		if voice.STTEnabled {
+			sb.WriteString(fmt.Sprintf("STT: `%s` / `%s`\n", voice.STTProvider, voice.STTModel))
+		} else {
+			sb.WriteString("STT: disabled\n")
+		}
+		if voice.TTSEnabled {
+			voiceDisplay := voice.TTSVoice
+			if voice.CustomVoice != "" {
+				voiceDisplay = fmt.Sprintf("%s (custom: `%s`)", voice.TTSVoice, voice.CustomVoice)
+			}
+			sb.WriteString(fmt.Sprintf("TTS: `%s` / %s", voice.TTSModel, voiceDisplay))
+		} else {
+			sb.WriteString("TTS: disabled")
+		}
+	}
+
+	return sb.String()
 }
 
 // ExecuteReset kills the current session and returns a status message.

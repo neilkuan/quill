@@ -53,6 +53,17 @@ Chat message → Platform Adapter → SessionPool → AcpConnection (stdin/stdou
  Teams)
 ```
 
+### Voice data flow
+
+```
+User voice 🎤 → STT (Whisper) → text → Agent → text → TTS (OpenAI) → voice 🔊 → User
+                [stt/]                                  [tts/]
+```
+
+- STT triggers on voice messages only; text messages skip STT
+- TTS triggers only when user sent a voice message (voice-in → voice-out)
+- Both STT and TTS are optional; each enabled independently via `[stt]` / `[tts]` config sections
+
 ### Key packages
 
 - **`platform/`** — Defines the `Platform` interface (`Start`/`Stop`) that every chat adapter must implement. Contains shared utilities like `SplitMessage` (used by all platforms for message-size splitting) and `TruncateUTF8`.
@@ -62,25 +73,31 @@ Chat message → Platform Adapter → SessionPool → AcpConnection (stdin/stdou
   - `pool.go` — `SessionPool` maps thread keys (`discord:{id}` / `tg:{id}` / `tg:{id}:{threadID}`) to `AcpConnection` instances. LRU eviction when pool is full, TTL-based idle cleanup, and query methods (`ListSessions`, `GetSessionInfo`, `KillSession`, `Stats`). Uses double-checked locking (RLock → RUnlock → Lock) for GetOrCreate.
   - `protocol.go` — JSON-RPC message types and ACP event classification (`ClassifyNotification` parses session updates into typed events: text chunks, thinking, tool calls, status)
 
-- **`command/`** — Shared bot command logic (`sessions`/`info`/`reset`). `ParseCommand` detects commands from text, `Execute*` functions format responses using pool query methods. Used by both Discord and Telegram handlers.
+- **`command/`** — Shared bot command logic (`sessions`/`info`/`reset`/`setvoice`/`voice-clear`/`voicemode`). `ParseCommand` detects commands from text, `Execute*` functions format responses using pool query methods. `/info` displays session details including STT/TTS status and voice configuration. Used by both Discord and Telegram handlers.
 
 - **`api/`** — Optional HTTP API server for session monitoring. Endpoints: `GET /api/sessions`, `DELETE /api/sessions/{key}`, `GET /api/health`. Enabled via `[api]` config section.
 
 - **`discord/`** — Discord platform adapter
   - `adapter.go` — `Adapter` struct implementing `platform.Platform`, wraps discordgo session lifecycle
-  - `handler.go` — Message handler: mention/thread detection, sender context injection (`openab.sender.v1` schema), image attachment download to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (1.5s ticker, truncates to 1900 chars during streaming, splits into multiple messages only on final edit). Registers Discord Slash Commands (`/sessions`, `/info`, `/reset`) on ready, handles interactions via `OnInteractionCreate`. Plain text commands also supported as fallback.
+  - `handler.go` — Message handler: mention/thread detection, sender context injection (`openab.sender.v1` schema), image attachment download to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (1.5s ticker, truncates to 1900 chars during streaming, splits into multiple messages only on final edit). Registers Discord Slash Commands (`/sessions`, `/info`, `/reset`, `/setvoice`, `/voice-clear`, `/voicemode`) on ready, handles interactions via `OnInteractionCreate`. Text command `setvoice` with audio attachment creates a custom voice via OpenAI API.
   - `reactions.go` — `StatusReactionController` state machine for emoji-based status indicators (queued → thinking → tool → done/error) with debounce, stall detection (soft 🥱 / hard 😨), and tool classification (coding/web/generic)
 
 - **`telegram/`** — Telegram platform adapter (uses [go-telegram/bot](https://github.com/go-telegram/bot) v1 with native forum topic support)
-  - `adapter.go` — `Adapter` struct implementing `platform.Platform`, uses `bot.New()` with `WithDefaultHandler` and context-based lifecycle. Registers BotCommands (`/sessions`, `/info`, `/reset`) via `SetMyCommands` on startup.
-  - `handler.go` — Message handler: command detection via entity parsing (`bot_command` at offset 0), @mention/reply-to-bot detection in groups, all messages in private chats, sender context injection (`openab.sender.v1` schema), photo download (largest PhotoSize via `GetFile`/`FileDownloadLink`) and voice/audio transcription to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (2s ticker for Telegram rate limits, 4096-char message limit). Forum topic support: `MessageThreadID` from `models.Message` threaded through all send paths. Session keys: `tg:{chatID}:{threadID}` for forum topics, `tg:{chatID}` otherwise.
+  - `adapter.go` — `Adapter` struct implementing `platform.Platform`, uses `bot.New()` with `WithDefaultHandler` and context-based lifecycle. Registers BotCommands (`/sessions`, `/info`, `/reset`, `/setvoice`, `/voice_clear`, `/voicemode`) via `SetMyCommands` on startup.
+  - `handler.go` — Message handler: command detection via entity parsing (`bot_command` at offset 0), @mention/reply-to-bot detection in groups, all messages in private chats, sender context injection (`openab.sender.v1` schema), photo download (largest PhotoSize via `GetFile`/`FileDownloadLink`) and voice/audio transcription to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (2s ticker for Telegram rate limits, 4096-char message limit). Forum topic support: `MessageThreadID` from `models.Message` threaded through all send paths. Session keys: `tg:{chatID}:{threadID}` for forum topics, `tg:{chatID}` otherwise. `/setvoice` requires replying to a voice message. Voice replies sent via `SendVoice` API.
   - `reactions.go` — `StatusReactionController` using `SetMessageReaction` API with typed `ReactionType` structs, debounce and stall detection, same state machine as Discord
 
-- **`transcribe/`** — Voice-to-text via OpenAI Whisper API. Defines a `Transcriber` interface and `OpenAITranscriber` implementation. Enabled when `transcribe.api_key` is set in config; injected into platform adapters that support voice messages (Discord and Telegram).
+- **`stt/`** — Speech-to-text via OpenAI Whisper API. Defines a `Transcriber` interface and `OpenAITranscriber` implementation. Enabled when `stt.api_key` is set in config; injected into platform adapters that support voice messages (Discord and Telegram). Logs `🎙️ stt: transcribing voice message` on each invocation.
 
-- **`config/`** — TOML configuration with `${ENV_VAR}` expansion and sensible defaults. Platform-specific configs are nested (`discord.reactions.emojis`, etc.). Having a `bot_token` in a platform section auto-enables that platform. Reference config: `config.toml.example`.
+- **`tts/`** — Text-to-speech via OpenAI TTS API.
+  - `synthesizer.go` — Defines `Synthesizer` interface: `Synthesize` (default voice), `SynthesizeWithVoice` (custom voice ID), `CreateVoice` (upload audio to create custom voice via `POST /audio/voices`).
+  - `openai.go` — `OpenAISynthesizer` implementation. Supports built-in voices (alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar) and custom voice IDs (`voice_xxx`). Custom voice IDs are auto-wrapped as `{"id": "voice_xxx"}` in the API request. Logs `🔊 tts: synthesizing voice reply` on each invocation.
+  - `voices.go` — `VoiceStore` manages per-user custom voice IDs. Persisted as `.voices.json` in the agent working directory. Also tracks per-user echo mode.
+  - Enabled when `tts.api_key` is set in config. Default voice gender is female (`nova`), configurable via `voice_gender`.
 
-- **`main.go`** — Loads config, creates session pool, creates transcriber (if configured), starts optional HTTP API server, registers all enabled `platform.Platform` adapters, starts them, runs idle-session cleanup (60s tick), and handles graceful shutdown via SIGINT/SIGTERM.
+- **`config/`** — TOML configuration with `${ENV_VAR}` expansion and sensible defaults. Platform-specific configs are nested (`discord.reactions.emojis`, etc.). Having a `bot_token` in a platform section auto-enables that platform. `[stt]` and `[tts]` sections auto-enable when `api_key` is set. Reference config: `config.toml.example`.
+
+- **`main.go`** — Loads config, creates session pool, creates STT transcriber (if configured), creates TTS synthesizer and voice store (if configured), starts optional HTTP API server, registers all enabled `platform.Platform` adapters (passing STT + TTS), starts them, runs idle-session cleanup (60s tick), and handles graceful shutdown via SIGINT/SIGTERM.
 
 ### Adding a new platform
 
@@ -88,6 +105,16 @@ Chat message → Platform Adapter → SessionPool → AcpConnection (stdin/stdou
 2. Add config struct to `config/config.go` (stub for Teams already exists)
 3. Register in `main.go`: `if cfg.Teams.Enabled { platforms = append(platforms, ...) }`
 4. `acp/` and `platform/` require no changes
+
+### Voice commands
+
+| Command | Discord | Telegram | Description |
+|---|---|---|---|
+| `/setvoice` | Audio attachment + text `setvoice` | Reply to a voice message with `/setvoice` | Create custom voice via OpenAI API (requires org access to `/audio/voices`) |
+| `/voice-clear` | Slash command | `/voice_clear` (Telegram uses underscore) | Clear custom voice, revert to default |
+| `/voicemode` | Slash command with `echo`/`default` option | `/voicemode echo` or `/voicemode default` | Toggle echo mode |
+
+Voice reply priority: per-user custom voice → default configured voice.
 
 ### ACP lifecycle (per thread)
 

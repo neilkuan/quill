@@ -1,4 +1,4 @@
-package transcribe
+package stt
 
 import (
 	"encoding/json"

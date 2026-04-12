@@ -15,8 +15,9 @@ type Config struct {
 	Agent      AgentConfig      `toml:"agent"`
 	Pool       PoolConfig       `toml:"pool"`
 	API        APIConfig        `toml:"api"`
-	Transcribe TranscribeConfig `toml:"transcribe"`
-	Discord    DiscordConfig    `toml:"discord"`
+	STT     STTConfig     `toml:"stt"`
+	TTS     TTSConfig     `toml:"tts"`
+	Discord DiscordConfig `toml:"discord"`
 	Telegram   TelegramConfig   `toml:"telegram"`
 	Teams      TeamsConfig      `toml:"teams"`
 }
@@ -76,9 +77,9 @@ type APIConfig struct {
 	Listen  string `toml:"listen"`
 }
 
-// --- Transcribe ---
+// --- STT (Speech-to-Text) ---
 
-type TranscribeConfig struct {
+type STTConfig struct {
 	Enabled  bool   `toml:"enabled"`
 	Provider string `toml:"provider"`
 	APIKey   string `toml:"api_key"`
@@ -86,6 +87,18 @@ type TranscribeConfig struct {
 	Language string `toml:"language"`
 	Prompt   string `toml:"prompt"`
 	BaseURL  string `toml:"base_url"`
+}
+
+// --- TTS (Text-to-Speech) ---
+
+type TTSConfig struct {
+	Enabled    bool   `toml:"enabled"`
+	APIKey     string `toml:"api_key"`     // OpenAI API key
+	Model      string `toml:"model"`       // Model name (default: "tts-1")
+	Voice      string `toml:"voice"`       // Voice name (overrides voice_gender if set)
+	VoiceGender string `toml:"voice_gender"` // "female" or "male" (default: "female")
+	BaseURL    string `toml:"base_url"`    // Custom API endpoint
+	TimeoutSec int    `toml:"timeout_sec"` // HTTP timeout in seconds (default: 60)
 }
 
 // --- Telegram ---
@@ -122,8 +135,11 @@ func applyDefaults(cfg *Config) {
 		cfg.Pool.SessionTTLHours = 24
 	}
 
-	// Transcribe
-	applyTranscribeDefaults(&cfg.Transcribe)
+	// STT (Speech-to-Text)
+	applySTTDefaults(&cfg.STT)
+
+	// TTS (Text-to-Speech)
+	applyTTSDefaults(&cfg.TTS)
 
 	// Discord — if the section is present with a token, default to enabled
 	if cfg.Discord.BotToken != "" && !cfg.Discord.Enabled {
@@ -140,7 +156,7 @@ func applyDefaults(cfg *Config) {
 	applyTelegramReactionDefaults(&cfg.Telegram.Reactions)
 }
 
-func applyTranscribeDefaults(tc *TranscribeConfig) {
+func applySTTDefaults(tc *STTConfig) {
 	if tc.APIKey != "" && !tc.Enabled {
 		tc.Enabled = true
 	}
@@ -155,6 +171,29 @@ func applyTranscribeDefaults(tc *TranscribeConfig) {
 	}
 	if tc.Prompt == "" {
 		tc.Prompt = "以下是繁體中文語音的逐字稿："
+	}
+}
+
+func applyTTSDefaults(tc *TTSConfig) {
+	if tc.APIKey != "" && !tc.Enabled {
+		tc.Enabled = true
+	}
+	if tc.Model == "" {
+		tc.Model = "tts-1"
+	}
+	if tc.VoiceGender == "" {
+		tc.VoiceGender = "female"
+	}
+	if tc.Voice == "" {
+		switch tc.VoiceGender {
+		case "male":
+			tc.Voice = "ash"
+		default: // "female" or anything else
+			tc.Voice = "nova"
+		}
+	}
+	if tc.TimeoutSec == 0 {
+		tc.TimeoutSec = 60
 	}
 }
 

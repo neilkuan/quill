@@ -8,7 +8,8 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/neilkuan/openab-go/acp"
 	"github.com/neilkuan/openab-go/config"
-	"github.com/neilkuan/openab-go/transcribe"
+	"github.com/neilkuan/openab-go/stt"
+	"github.com/neilkuan/openab-go/tts"
 )
 
 // Adapter implements platform.Platform for Telegram.
@@ -18,7 +19,7 @@ type Adapter struct {
 	cancel  context.CancelFunc
 }
 
-func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber transcribe.Transcriber) (*Adapter, error) {
+func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, voiceStore *tts.VoiceStore, ttsCfg config.TTSConfig) (*Adapter, error) {
 	allowed := make(map[int64]bool, len(cfg.AllowedChats))
 	for _, id := range cfg.AllowedChats {
 		allowed[id] = true
@@ -29,6 +30,9 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber tr
 		AllowedChats:    allowed,
 		ReactionsConfig: cfg.Reactions,
 		Transcriber:     transcriber,
+		Synthesizer:     synthesizer,
+		VoiceStore:      voiceStore,
+		TTSConfig:       ttsCfg,
 	}
 
 	b, err := bot.New(cfg.BotToken,
@@ -62,6 +66,9 @@ func (a *Adapter) Start() error {
 			{Command: "sessions", Description: "List all active agent sessions"},
 			{Command: "info", Description: "Show current chat session details"},
 			{Command: "reset", Description: "Reset the current session"},
+			{Command: "setvoice", Description: "Set custom bot voice (reply to a voice message)"},
+			{Command: "voice_clear", Description: "Clear your custom voice"},
+			{Command: "voicemode", Description: "Set voice mode: echo or default"},
 		},
 	})
 	if err != nil {

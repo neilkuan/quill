@@ -20,7 +20,8 @@ import (
 	"github.com/neilkuan/openab-go/command"
 	"github.com/neilkuan/openab-go/config"
 	"github.com/neilkuan/openab-go/platform"
-	"github.com/neilkuan/openab-go/transcribe"
+	"github.com/neilkuan/openab-go/stt"
+	"github.com/neilkuan/openab-go/tts"
 )
 
 type Handler struct {
@@ -28,7 +29,10 @@ type Handler struct {
 	Pool            *acp.SessionPool
 	AllowedChats    map[int64]bool
 	ReactionsConfig config.ReactionsConfig
-	Transcriber     transcribe.Transcriber
+	Transcriber     stt.Transcriber
+	Synthesizer     tts.Synthesizer
+	VoiceStore      *tts.VoiceStore
+	TTSConfig       config.TTSConfig
 	botUser         *models.User
 }
 
@@ -65,8 +69,12 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 
 	// Handle native /commands (works in both private and group chats)
 	if cmdName := extractCommand(msg); cmdName != "" {
+		// Telegram uses underscore for multi-word commands
+		if cmdName == "voice_clear" {
+			cmdName = "voice-clear"
+		}
 		if cmd, ok := command.ParseCommand(cmdName); ok {
-			h.handleCommand(ctx, b, chatID, threadID, msg.ID, cmd)
+			h.handleCommand(ctx, b, chatID, threadID, msg, cmd)
 			return
 		}
 	}
@@ -158,12 +166,12 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	var transcriptions []string
 	if hasVoice || hasAudio {
 		if h.Transcriber == nil {
-			slog.Warn("voice message received but [transcribe] is not configured, skipping")
+			slog.Warn("voice message received but [stt] is not configured, skipping")
 			if prompt == "" {
 				b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID:          chatID,
 					MessageThreadID: threadID,
-					Text:            "⚠️ Voice transcription is not configured. Please set up `[transcribe]` in config.",
+					Text:            "⚠️ Voice transcription is not configured. Please set up `[stt]` in config.",
 					ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 				})
 				return
@@ -189,6 +197,7 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 				if err != nil {
 					slog.Error("failed to download audio", "error", err)
 				} else {
+					slog.Info("🎙️ stt: transcribing voice message", "filename", filename, "user", msg.From.Username)
 					text, tErr := h.Transcriber.Transcribe(localPath)
 					if removeErr := os.Remove(localPath); removeErr != nil {
 						slog.Debug("failed to remove tmp audio", "path", localPath, "error", removeErr)
@@ -252,7 +261,7 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	)
 	reactions.SetQueued()
 
-	result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
+	finalText, result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
 
 	// Cleanup downloaded images
 	for _, p := range imagePaths {
@@ -266,9 +275,16 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	} else {
 		reactions.SetError()
 	}
+
+	// TTS: synthesize voice reply only when the user sent a voice/audio message
+	if result == nil && h.Synthesizer != nil && finalText != "" && (hasVoice || hasAudio) {
+		userID := fmt.Sprintf("%d", msg.From.ID)
+		go h.sendVoiceReply(ctx, b, chatID, sent.ID, userID, finalText)
+	}
 }
 
-func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msgID int, cmd *command.Command) {
+func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msg *models.Message, cmd *command.Command) {
+	userID := fmt.Sprintf("%d", msg.From.ID)
 	var response string
 
 	switch cmd.Name {
@@ -276,10 +292,16 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 		response = command.ExecuteSessions(h.Pool)
 	case command.CmdInfo:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
-		response = command.ExecuteInfo(h.Pool, sessionKey)
+		response = command.ExecuteInfo(h.Pool, sessionKey, h.buildVoiceInfo(userID))
 	case command.CmdReset:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		response = command.ExecuteReset(h.Pool, sessionKey)
+	case command.CmdSetVoice:
+		response = h.handleSetVoice(ctx, b, msg, userID)
+	case command.CmdVoiceClear:
+		response = h.handleVoiceClear(userID)
+	case command.CmdVoiceMode:
+		response = h.handleVoiceMode(userID, cmd.Args)
 	default:
 		return
 	}
@@ -292,7 +314,7 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 			MessageThreadID: threadID,
 			Text:            converted,
 			ParseMode:       models.ParseModeMarkdownV1,
-			ReplyParameters: &models.ReplyParameters{MessageID: msgID},
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 		})
 		if err != nil {
 			// Fallback to plain text if markdown fails
@@ -301,7 +323,7 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 				ChatID:          chatID,
 				MessageThreadID: threadID,
 				Text:            chunk,
-				ReplyParameters: &models.ReplyParameters{MessageID: msgID},
+				ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 			})
 		}
 	}
@@ -316,8 +338,9 @@ func (h *Handler) streamPrompt(
 	msgID int,
 	threadID int,
 	reactions *StatusReactionController,
-) error {
-	return h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
+) (string, error) {
+	var finalText string
+	err := h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
 		reset := conn.SessionReset
 		conn.SessionReset = false
 
@@ -439,7 +462,8 @@ func (h *Handler) streamPrompt(
 		}
 
 		// Final message — split for 4096-char Telegram limit
-		finalContent := composeDisplay(toolLines, textBuf.String())
+		finalText = textBuf.String()
+		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
 			finalContent = "_(no response)_"
 		}
@@ -482,6 +506,142 @@ func (h *Handler) streamPrompt(
 
 		return nil
 	})
+	return finalText, err
+}
+
+// --- Voice command handlers ---
+
+func (h *Handler) handleSetVoice(ctx context.Context, b *bot.Bot, msg *models.Message, userID string) string {
+	if h.VoiceStore == nil || h.Synthesizer == nil {
+		return "TTS is not configured."
+	}
+
+	replyMsg := msg.ReplyToMessage
+	if replyMsg == nil || (replyMsg.Voice == nil && replyMsg.Audio == nil) {
+		return "Please reply to a voice message with /setvoice to set your custom voice."
+	}
+
+	var fileID, filename string
+	if replyMsg.Voice != nil {
+		fileID = replyMsg.Voice.FileID
+		filename = "voice.ogg"
+	} else {
+		fileID = replyMsg.Audio.FileID
+		filename = replyMsg.Audio.FileName
+		if filename == "" {
+			filename = "audio.mp3"
+		}
+	}
+
+	tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		return fmt.Sprintf("Failed: %v", err)
+	}
+
+	localPath, err := h.downloadFile(ctx, b, fileID, filename, tmpDir)
+	if err != nil {
+		return fmt.Sprintf("Failed to download voice: %v", err)
+	}
+	defer os.Remove(localPath)
+
+	voiceID, err := h.Synthesizer.CreateVoice(msg.From.Username, localPath)
+	if err != nil {
+		return fmt.Sprintf("Failed to create voice: %v", err)
+	}
+
+	if err := h.VoiceStore.SetVoice(userID, voiceID); err != nil {
+		return fmt.Sprintf("Voice created but failed to save: %v", err)
+	}
+	return fmt.Sprintf("Your custom voice has been created! (ID: `%s`)", voiceID)
+}
+
+func (h *Handler) handleVoiceClear(userID string) string {
+	if h.VoiceStore == nil {
+		return "TTS is not configured."
+	}
+	if err := h.VoiceStore.RemoveVoice(userID); err != nil {
+		return fmt.Sprintf("Failed to clear voice: %v", err)
+	}
+	return "Your custom voice has been cleared. Bot will use the default voice."
+}
+
+func (h *Handler) handleVoiceMode(userID, args string) string {
+	if h.VoiceStore == nil {
+		return "TTS is not configured."
+	}
+	mode := strings.TrimSpace(strings.ToLower(args))
+	switch mode {
+	case "echo":
+		h.VoiceStore.SetEchoMode(userID, true)
+		return "Voice mode set to *echo* — bot will reply using your voice."
+	case "default", "":
+		h.VoiceStore.SetEchoMode(userID, false)
+		return "Voice mode set to *default* — bot will use the configured voice."
+	default:
+		return "Unknown mode. Use `/voicemode echo` or `/voicemode default`."
+	}
+}
+
+// sendVoiceReply synthesizes and sends a voice message.
+// Uses per-user custom voice if set, otherwise default voice.
+func (h *Handler) sendVoiceReply(ctx context.Context, b *bot.Bot, chatID int64, replyToMsgID int, userID, text string) {
+	var audioPath string
+	var err error
+
+	usedVoice := h.TTSConfig.Voice
+	if h.VoiceStore != nil {
+		if voiceID := h.VoiceStore.GetVoice(userID); voiceID != "" {
+			usedVoice = voiceID
+			audioPath, err = h.Synthesizer.SynthesizeWithVoice(text, voiceID)
+		}
+	}
+	if audioPath == "" && err == nil {
+		audioPath, err = h.Synthesizer.Synthesize(text)
+	}
+	slog.Info("🔊 tts: synthesizing voice reply", "user", userID, "voice", usedVoice, "text_length", len(text))
+	if err != nil {
+		slog.Error("tts synthesis failed", "error", err)
+		return
+	}
+	defer os.Remove(audioPath)
+
+	// Open the audio file for reading
+	file, err := os.Open(audioPath)
+	if err != nil {
+		slog.Error("failed to open audio file", "error", err)
+		return
+	}
+	defer file.Close()
+
+	// Send voice message using new go-telegram/bot API
+	_, err = b.SendVoice(ctx, &bot.SendVoiceParams{
+		ChatID:          chatID,
+		MessageThreadID: 0,
+		Voice: &models.InputFileUpload{
+			Filename: "voice.ogg",
+			Data:     file,
+		},
+		ReplyParameters: &models.ReplyParameters{MessageID: replyToMsgID},
+	})
+	if err != nil {
+		slog.Error("failed to send tts voice", "error", err)
+	}
+}
+
+func (h *Handler) buildVoiceInfo(userID string) *command.VoiceInfo {
+	vi := &command.VoiceInfo{
+		STTEnabled: h.Transcriber != nil,
+		TTSEnabled: h.Synthesizer != nil,
+		TTSModel:   h.TTSConfig.Model,
+		TTSVoice:   h.TTSConfig.Voice,
+	}
+	if h.Transcriber != nil {
+		vi.STTProvider = "openai"
+	}
+	if h.VoiceStore != nil && userID != "" {
+		vi.CustomVoice = h.VoiceStore.GetVoice(userID)
+	}
+	return vi
 }
 
 // --- Helper functions ---

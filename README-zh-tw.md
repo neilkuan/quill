@@ -88,12 +88,12 @@ enabled = true
 remove_after_reply = false
 ```
 
-##### 語音轉錄（選用）
+##### STT — 語音轉文字（選用）
 
-要啟用語音訊息支援，在設定中加入 `[transcribe]` 區段和 OpenAI API key：
+要啟用語音訊息支援，在設定中加入 `[stt]` 區段和 OpenAI API key：
 
 ```toml
-[transcribe]
+[stt]
 api_key = "${OPENAI_API_KEY}"
 # provider = "openai"       # 預設
 # model = "whisper-1"       # 預設
@@ -102,6 +102,33 @@ api_key = "${OPENAI_API_KEY}"
 ```
 
 設定後，語音訊息（Discord & Telegram）會自動轉錄為文字送給 Agent。未設定時，純語音訊息會回傳警告給使用者。
+
+##### TTS — 文字轉語音（選用）
+
+要啟用語音回覆功能，在設定中加入 `[tts]` 區段和 OpenAI API key：
+
+```toml
+[tts]
+api_key = "${OPENAI_API_KEY}"
+# model = "tts-1"           # 或 "tts-1-hd"、"gpt-4o-mini-tts"
+# voice = "nova"            # alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar
+# voice_gender = "female"   # "female"（預設，nova）或 "male"（ash）— 未設定 voice 時使用
+```
+
+設定後，當使用者傳語音訊息時，bot 會同時回覆文字和語音訊息。使用 OpenAI TTS API。
+
+##### 語音功能計價（OpenAI）
+
+| 服務 | 模型 | 價格 |
+|------|------|------|
+| **STT** | `whisper-1` | $0.006 / 分鐘 |
+| **STT** | `gpt-4o-mini-transcribe` | $0.003 / 分鐘 |
+| **STT** | `gpt-4o-transcribe` | $0.006 / 分鐘 |
+| **TTS** | `tts-1` | $15.00 / 百萬字元 |
+| **TTS** | `tts-1-hd` | $30.00 / 百萬字元 |
+| **TTS** | `gpt-4o-mini-tts` | $0.015 / 分鐘 |
+
+一般 chatbot 語音回覆（約 300 字元）使用 `tts-1` 約花費 **$0.0045**。價格為 2026 年資料，最新請見 [OpenAI pricing](https://openai.com/api/pricing/)。
 
 完整設定參考請見 [`config.toml.example`](config.toml.example)，包含其他 Agent（Claude、Codex、Gemini）的設定範例。
 
@@ -229,8 +256,10 @@ openab-go/
 │   └── command.go       # Bot 指令解析與執行（sessions/reset/info）
 ├── api/
 │   └── server.go        # HTTP API server，用於 session 監控
-├── transcribe/
-│   └── transcribe.go    # Transcriber 介面、OpenAI Whisper 實作
+├── stt/
+│   └── stt.go           # Transcriber 介面、OpenAI Whisper 實作
+├── tts/
+│   └── openai.go        # Synthesizer 介面、OpenAI TTS 實作
 ├── discord/
 │   ├── adapter.go       # Discord 平台 adapter（實作 Platform 介面）
 │   ├── handler.go       # Discord 訊息處理、討論串建立、編輯串流
