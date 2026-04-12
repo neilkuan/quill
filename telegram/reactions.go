@@ -1,14 +1,15 @@
 package telegram
 
 import (
-	"encoding/json"
+	"context"
 	"log/slog"
 	"math/rand"
 	"strings"
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/neilkuan/openab-go/config"
 )
 
@@ -38,7 +39,7 @@ func classifyToolTelegram(name string, emojis *config.ReactionEmojis) string {
 
 type StatusReactionController struct {
 	mu             sync.Mutex
-	bot            *tgbotapi.BotAPI
+	b              *bot.Bot
 	chatID         int64
 	messageID      int
 	emojis         config.ReactionEmojis
@@ -53,14 +54,14 @@ type StatusReactionController struct {
 
 func NewStatusReactionController(
 	enabled bool,
-	bot *tgbotapi.BotAPI,
+	b *bot.Bot,
 	chatID int64,
 	messageID int,
 	emojis config.ReactionEmojis,
 	timing config.ReactionTiming,
 ) *StatusReactionController {
 	return &StatusReactionController{
-		bot:       bot,
+		b:         b,
 		chatID:    chatID,
 		messageID: messageID,
 		emojis:    emojis,
@@ -223,19 +224,24 @@ func (c *StatusReactionController) cancelTimers() {
 // Telegram replaces all bot reactions on a message with each call.
 // An empty emoji clears the reaction.
 func (c *StatusReactionController) setReaction(emoji string) {
-	var reaction []map[string]string
+	var reaction []models.ReactionType
 	if emoji != "" {
-		reaction = []map[string]string{{"type": "emoji", "emoji": emoji}}
+		reaction = []models.ReactionType{
+			{
+				Type: models.ReactionTypeTypeEmoji,
+				ReactionTypeEmoji: &models.ReactionTypeEmoji{
+					Emoji: emoji,
+				},
+			},
+		}
 	}
 
-	reactionJSON, _ := json.Marshal(reaction)
-
-	params := tgbotapi.Params{}
-	params.AddNonZero64("chat_id", c.chatID)
-	params.AddNonZero("message_id", c.messageID)
-	params["reaction"] = string(reactionJSON)
-
-	if _, err := c.bot.MakeRequest("setMessageReaction", params); err != nil {
+	_, err := c.b.SetMessageReaction(context.Background(), &bot.SetMessageReactionParams{
+		ChatID:    c.chatID,
+		MessageID: c.messageID,
+		Reaction:  reaction,
+	})
+	if err != nil {
 		slog.Debug("telegram setMessageReaction failed", "emoji", emoji, "error", err)
 	}
 }

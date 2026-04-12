@@ -12,7 +12,7 @@
 
 - **可插拔的 Agent 後端** — Kiro、Claude Code、Codex、Gemini（任何 ACP 相容 CLI）
 - **Discord 整合** — @mention 觸發、自動建立討論串、多輪對話
-- **Telegram 整合** — 群組中 @mention / 回覆 bot、私聊、語音訊息自動接受
+- **Telegram 整合** — 群組中 @mention / 回覆 bot、私聊、語音訊息自動接受、forum topic 支援（每個 topic 一個 session）
 - **語音訊息轉錄** — 透過 OpenAI Whisper API 轉錄語音訊息（Discord & Telegram）
 - **即時編輯串流** — Agent 工作時即時更新訊息（Discord: 1.5s、Telegram: 2s）
 - **Emoji 狀態反應** — 透過平台原生 reaction 顯示處理進度
@@ -151,7 +151,7 @@ listen = ":8080"
 |---|---|---|
 | **觸發（頻道/群組）** | @mention 或在討論串中 | @mention、回覆 bot 或語音訊息 |
 | **觸發（私訊）** | — | 所有訊息 |
-| **討論串模型** | 自動建立 Discord 討論串 | 每個聊天一個 session（forum/topic 尚未支援） |
+| **討論串模型** | 自動建立 Discord 討論串 | 每個聊天一個 session；forum 超級群組每個 topic 一個 session |
 | **訊息上限** | 2,000 字元 | 4,096 字元 |
 | **編輯串流間隔** | 1.5 秒 | 2 秒（Telegram 速率限制較嚴格） |
 | **Markdown** | 原生 GFM 支援 | `**粗體**` 自動轉換為 `*粗體*`（Telegram Markdown v1） |
@@ -159,7 +159,7 @@ listen = ":8080"
 | **Reaction emoji** | 排隊 `👀` → 思考 `🤔` → 完成 `🆗` + 隨機表情 | 排隊 `👌` → 思考 `🤔` → 完成 = 隨機允許表情 |
 | **群組語音** | 需要 @mention | 自動接受（錄音時無法 @mention） |
 | **圖片處理** | 從 CDN 下載 URL | 透過 Bot API `getFile` 下載（最大 PhotoSize） |
-| **Bot 函式庫** | [discordgo](https://github.com/bwmarrin/discordgo) | [telegram-bot-api/v5](https://github.com/go-telegram-bot-api/telegram-bot-api) |
+| **Bot 函式庫** | [discordgo](https://github.com/bwmarrin/discordgo) | [go-telegram/bot](https://github.com/go-telegram/bot) |
 | **更新機制** | WebSocket gateway | Long polling |
 
 ##### Telegram 設定注意事項
@@ -256,7 +256,7 @@ openab-go/
 |------|------|------|
 | 語言 | Go | 編譯快速、單一靜態二進位檔、goroutine 並行 |
 | Discord 函式庫 | [discordgo](https://github.com/bwmarrin/discordgo) | Go 生態系的標準 Discord 函式庫 |
-| Telegram 函式庫 | [telegram-bot-api/v5](https://github.com/go-telegram-bot-api/telegram-bot-api) | 最多人使用的 Go Telegram bot 函式庫 |
+| Telegram 函式庫 | [go-telegram/bot](https://github.com/go-telegram/bot) | 積極維護、原生支援 forum topic |
 | 設定格式 | TOML | 人類可讀，與原始 Rust 版本相同 |
 | Logging | `log/slog`（標準函式庫） | 零依賴、結構化 logging |
 | 並行處理 | goroutines + `sync.Mutex` / `sync.RWMutex` | 慣用 Go 風格，不需外部 async runtime |

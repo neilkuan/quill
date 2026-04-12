@@ -12,7 +12,7 @@ This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (origi
 
 - **Pluggable agent backends** — Kiro, Claude Code, Codex, Gemini (any ACP-compatible CLI)
 - **Discord integration** — @mention triggers, auto thread creation, multi-turn conversations
-- **Telegram integration** — @mention / reply-to-bot in groups, private chat, voice auto-accepted in groups
+- **Telegram integration** — @mention / reply-to-bot in groups, private chat, voice auto-accepted in groups, forum topic support (one session per topic)
 - **Voice message transcription** — transcribes voice messages via OpenAI Whisper API (Discord & Telegram)
 - **Real-time edit streaming** — updates messages as the agent works (Discord: 1.5s, Telegram: 2s)
 - **Emoji status reactions** — processing progress via platform-native reactions
@@ -151,7 +151,7 @@ listen = ":8080"
 |---|---|---|
 | **Trigger (channel/group)** | @mention or in-thread | @mention, reply-to-bot, or voice message |
 | **Trigger (DM/private)** | — | All messages |
-| **Thread model** | Auto-creates Discord threads | One session per chat (topic support pending library upgrade) |
+| **Thread model** | Auto-creates Discord threads | One session per chat; forum supergroups get one session per topic |
 | **Message limit** | 2,000 chars | 4,096 chars |
 | **Edit streaming interval** | 1.5s | 2s (Telegram rate limit is stricter) |
 | **Markdown** | Native GFM support | `**bold**` auto-converted to `*bold*` (Telegram Markdown v1) |
@@ -159,7 +159,7 @@ listen = ":8080"
 | **Reaction emojis** | Queued `👀` → Thinking `🤔` → Done `🆗` + random face | Queued `👌` → Thinking `🤔` → Done = random face from allowed set |
 | **Voice in groups** | Requires @mention | Auto-accepted (can't @mention while recording) |
 | **Image handling** | Download from CDN by URL | Download via Bot API `getFile` (largest PhotoSize) |
-| **Bot library** | [discordgo](https://github.com/bwmarrin/discordgo) | [telegram-bot-api/v5](https://github.com/go-telegram-bot-api/telegram-bot-api) |
+| **Bot library** | [discordgo](https://github.com/bwmarrin/discordgo) | [go-telegram/bot](https://github.com/go-telegram/bot) |
 | **Update mechanism** | WebSocket gateway | Long polling |
 
 ##### Telegram Setup Notes
@@ -256,7 +256,7 @@ openab-go/
 |---|---|---|
 | Language | Go | Fast compile, single static binary, goroutine concurrency |
 | Discord lib | [discordgo](https://github.com/bwmarrin/discordgo) | De facto Go Discord library |
-| Telegram lib | [telegram-bot-api/v5](https://github.com/go-telegram-bot-api/telegram-bot-api) | Most popular Go Telegram bot library |
+| Telegram lib | [go-telegram/bot](https://github.com/go-telegram/bot) | Actively maintained, native forum topic support |
 | Config format | TOML | Human-readable, same as original Rust version |
 | Logging | `log/slog` (stdlib) | Zero dependency, structured logging |
 | Concurrency | goroutines + `sync.Mutex` / `sync.RWMutex` | Idiomatic Go, no external async runtime needed |

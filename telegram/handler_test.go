@@ -3,26 +3,51 @@ package telegram
 import (
 	"testing"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 )
 
 func TestBuildSessionKey(t *testing.T) {
 	tests := []struct {
-		name    string
-		msg     *tgbotapi.Message
-		want    string
+		name string
+		msg  *models.Message
+		want string
 	}{
 		{
 			name: "private chat",
-			msg: &tgbotapi.Message{
-				Chat: &tgbotapi.Chat{ID: 12345, Type: "private"},
+			msg: &models.Message{
+				Chat: models.Chat{ID: 12345, Type: models.ChatTypePrivate},
 			},
 			want: "tg:12345",
 		},
 		{
-			name: "group chat",
-			msg: &tgbotapi.Message{
-				Chat: &tgbotapi.Chat{ID: -100123456789, Type: "supergroup"},
+			name: "group chat (non-forum)",
+			msg: &models.Message{
+				Chat: models.Chat{ID: -100123456789, Type: models.ChatTypeSupergroup},
+			},
+			want: "tg:-100123456789",
+		},
+		{
+			name: "forum supergroup with topic",
+			msg: &models.Message{
+				MessageThreadID: 42,
+				IsTopicMessage:  true,
+				Chat:            models.Chat{ID: -100123456789, Type: models.ChatTypeSupergroup, IsForum: true},
+			},
+			want: "tg:-100123456789:42",
+		},
+		{
+			name: "forum supergroup General topic (thread_id=1)",
+			msg: &models.Message{
+				MessageThreadID: 1,
+				IsTopicMessage:  true,
+				Chat:            models.Chat{ID: -100123456789, Type: models.ChatTypeSupergroup, IsForum: true},
+			},
+			want: "tg:-100123456789:1",
+		},
+		{
+			name: "forum chat but message not in topic",
+			msg: &models.Message{
+				Chat: models.Chat{ID: -100123456789, Type: models.ChatTypeSupergroup, IsForum: true},
 			},
 			want: "tg:-100123456789",
 		},
@@ -38,19 +63,147 @@ func TestBuildSessionKey(t *testing.T) {
 	}
 }
 
+func TestBuildSessionKeyFromChat(t *testing.T) {
+	tests := []struct {
+		name     string
+		chatID   int64
+		threadID int
+		want     string
+	}{
+		{
+			name:     "non-forum",
+			chatID:   -100123456789,
+			threadID: 0,
+			want:     "tg:-100123456789",
+		},
+		{
+			name:     "forum topic",
+			chatID:   -100123456789,
+			threadID: 42,
+			want:     "tg:-100123456789:42",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildSessionKeyFromChat(tt.chatID, tt.threadID)
+			if got != tt.want {
+				t.Errorf("buildSessionKeyFromChat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTopicThreadID(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  *models.Message
+		want int
+	}{
+		{"non-topic message", &models.Message{MessageThreadID: 5, IsTopicMessage: false}, 0},
+		{"topic message", &models.Message{MessageThreadID: 42, IsTopicMessage: true, Chat: models.Chat{IsForum: true}}, 42},
+		{"no thread id", &models.Message{}, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := topicThreadID(tt.msg)
+			if got != tt.want {
+				t.Errorf("topicThreadID() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsForumTopic(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  *models.Message
+		want bool
+	}{
+		{"non-forum", &models.Message{Chat: models.Chat{IsForum: false}}, false},
+		{"forum but not topic msg", &models.Message{Chat: models.Chat{IsForum: true}, IsTopicMessage: false}, false},
+		{"forum topic msg", &models.Message{Chat: models.Chat{IsForum: true}, IsTopicMessage: true, MessageThreadID: 42}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isForumTopic(tt.msg)
+			if got != tt.want {
+				t.Errorf("isForumTopic() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  *models.Message
+		want string
+	}{
+		{
+			name: "simple command",
+			msg: &models.Message{
+				Text: "/sessions",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 9},
+				},
+			},
+			want: "sessions",
+		},
+		{
+			name: "command with bot name",
+			msg: &models.Message{
+				Text: "/reset@mybot",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 12},
+				},
+			},
+			want: "reset",
+		},
+		{
+			name: "command not at start",
+			msg: &models.Message{
+				Text: "hey /info",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 4, Length: 5},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "no command",
+			msg: &models.Message{
+				Text: "hello world",
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractCommand(tt.msg)
+			if got != tt.want {
+				t.Errorf("extractCommand() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsBotMentioned(t *testing.T) {
 	tests := []struct {
 		name        string
-		msg         *tgbotapi.Message
+		msg         *models.Message
 		botUsername string
 		want        bool
 	}{
 		{
 			name: "mentioned in text",
-			msg: &tgbotapi.Message{
+			msg: &models.Message{
 				Text: "@testbot hello",
-				Entities: []tgbotapi.MessageEntity{
-					{Type: "mention", Offset: 0, Length: 8},
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeMention, Offset: 0, Length: 8},
 				},
 			},
 			botUsername: "testbot",
@@ -58,10 +211,10 @@ func TestIsBotMentioned(t *testing.T) {
 		},
 		{
 			name: "mentioned case insensitive",
-			msg: &tgbotapi.Message{
+			msg: &models.Message{
 				Text: "@TestBot hello",
-				Entities: []tgbotapi.MessageEntity{
-					{Type: "mention", Offset: 0, Length: 8},
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeMention, Offset: 0, Length: 8},
 				},
 			},
 			botUsername: "testbot",
@@ -69,19 +222,19 @@ func TestIsBotMentioned(t *testing.T) {
 		},
 		{
 			name: "not mentioned",
-			msg: &tgbotapi.Message{
+			msg: &models.Message{
 				Text:     "hello world",
-				Entities: []tgbotapi.MessageEntity{},
+				Entities: []models.MessageEntity{},
 			},
 			botUsername: "testbot",
 			want:        false,
 		},
 		{
 			name: "different bot mentioned",
-			msg: &tgbotapi.Message{
+			msg: &models.Message{
 				Text: "@otherbot hello",
-				Entities: []tgbotapi.MessageEntity{
-					{Type: "mention", Offset: 0, Length: 9},
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeMention, Offset: 0, Length: 9},
 				},
 			},
 			botUsername: "testbot",
@@ -89,11 +242,11 @@ func TestIsBotMentioned(t *testing.T) {
 		},
 		{
 			name: "mentioned in caption",
-			msg: &tgbotapi.Message{
-				Text: "",
+			msg: &models.Message{
+				Text:    "",
 				Caption: "@testbot check this",
-				CaptionEntities: []tgbotapi.MessageEntity{
-					{Type: "mention", Offset: 0, Length: 8},
+				CaptionEntities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeMention, Offset: 0, Length: 8},
 				},
 			},
 			botUsername: "testbot",
@@ -101,7 +254,7 @@ func TestIsBotMentioned(t *testing.T) {
 		},
 		{
 			name: "no entities",
-			msg: &tgbotapi.Message{
+			msg: &models.Message{
 				Text: "@testbot hello",
 			},
 			botUsername: "testbot",
@@ -126,42 +279,12 @@ func TestStripBotMention(t *testing.T) {
 		botUsername string
 		want        string
 	}{
-		{
-			name:        "mention at start",
-			text:        "@testbot hello world",
-			botUsername:  "testbot",
-			want:        "hello world",
-		},
-		{
-			name:        "mention at end",
-			text:        "hello @testbot",
-			botUsername:  "testbot",
-			want:        "hello",
-		},
-		{
-			name:        "mention in middle",
-			text:        "hey @testbot how are you",
-			botUsername:  "testbot",
-			want:        "hey  how are you",
-		},
-		{
-			name:        "case insensitive",
-			text:        "@TestBot hello",
-			botUsername:  "testbot",
-			want:        "hello",
-		},
-		{
-			name:        "no mention",
-			text:        "hello world",
-			botUsername:  "testbot",
-			want:        "hello world",
-		},
-		{
-			name:        "empty text",
-			text:        "",
-			botUsername:  "testbot",
-			want:        "",
-		},
+		{"mention at start", "@testbot hello world", "testbot", "hello world"},
+		{"mention at end", "hello @testbot", "testbot", "hello"},
+		{"mention in middle", "hey @testbot how are you", "testbot", "hey  how are you"},
+		{"case insensitive", "@TestBot hello", "testbot", "hello"},
+		{"no mention", "hello world", "testbot", "hello world"},
+		{"empty text", "", "testbot", ""},
 	}
 
 	for _, tt := range tests {
@@ -181,33 +304,11 @@ func TestComposeDisplay_Telegram(t *testing.T) {
 		text      string
 		want      string
 	}{
-		{
-			name: "text only",
-			text: "Hello world",
-			want: "Hello world",
-		},
-		{
-			name: "text with trailing whitespace",
-			text: "Hello world  \n\n",
-			want: "Hello world",
-		},
-		{
-			name:      "tools and text",
-			toolLines: []string{"🔧 `Read`...", "✅ `Write`"},
-			text:      "Done!",
-			want:      "🔧 `Read`...\n✅ `Write`\n\nDone!",
-		},
-		{
-			name:      "tools only",
-			toolLines: []string{"🔧 `Read`..."},
-			text:      "",
-			want:      "🔧 `Read`...\n\n",
-		},
-		{
-			name: "empty",
-			text: "",
-			want: "",
-		},
+		{"text only", nil, "Hello world", "Hello world"},
+		{"text with trailing whitespace", nil, "Hello world  \n\n", "Hello world"},
+		{"tools and text", []string{"🔧 `Read`...", "✅ `Write`"}, "Done!", "🔧 `Read`...\n✅ `Write`\n\nDone!"},
+		{"tools only", []string{"🔧 `Read`..."}, "", "🔧 `Read`...\n\n"},
+		{"empty", nil, "", ""},
 	}
 
 	for _, tt := range tests {

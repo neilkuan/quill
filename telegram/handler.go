@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,8 @@ import (
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/neilkuan/openab-go/acp"
 	"github.com/neilkuan/openab-go/command"
 	"github.com/neilkuan/openab-go/config"
@@ -22,31 +24,37 @@ import (
 )
 
 type Handler struct {
-	Bot             *tgbotapi.BotAPI
+	Bot             *bot.Bot
 	Pool            *acp.SessionPool
 	AllowedChats    map[int64]bool
 	ReactionsConfig config.ReactionsConfig
 	Transcriber     transcribe.Transcriber
+	botUser         *models.User
 }
 
-func (h *Handler) HandleUpdate(update tgbotapi.Update) {
+func (h *Handler) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return
 	}
+	msg := update.Message
+
 	slog.Debug("telegram update",
-		"chat_id", update.Message.Chat.ID,
-		"chat_type", update.Message.Chat.Type,
-		"text", update.Message.Text,
+		"chat_id", msg.Chat.ID,
+		"chat_type", msg.Chat.Type,
+		"text", msg.Text,
+		"is_forum", msg.Chat.IsForum,
+		"thread_id", msg.MessageThreadID,
 	)
-	h.handleMessage(update.Message)
+	h.handleMessage(ctx, b, msg)
 }
 
-func (h *Handler) handleMessage(msg *tgbotapi.Message) {
+func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 	if msg.From == nil || msg.From.IsBot {
 		return
 	}
 
 	chatID := msg.Chat.ID
+	threadID := topicThreadID(msg)
 
 	// Check allowed chats
 	if len(h.AllowedChats) > 0 && !h.AllowedChats[chatID] {
@@ -56,24 +64,23 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// Handle native /commands (works in both private and group chats)
-	if msg.IsCommand() {
-		cmdName := msg.Command() // "sessions", "info", "reset"
+	if cmdName := extractCommand(msg); cmdName != "" {
 		if cmd, ok := command.ParseCommand(cmdName); ok {
-			h.handleCommand(chatID, msg.MessageID, cmd)
+			h.handleCommand(ctx, b, chatID, threadID, msg.ID, cmd)
 			return
 		}
 	}
 
-	isPrivate := msg.Chat.IsPrivate()
+	isPrivate := msg.Chat.Type == models.ChatTypePrivate
 
 	// In group chats, respond to @mentions, replies to the bot,
 	// or voice/audio messages (since Telegram UI doesn't allow @mentions in voice recordings).
 	if !isPrivate {
-		botUsername := h.Bot.Self.UserName
+		botUsername := h.botUser.Username
 		mentioned := isBotMentioned(msg, botUsername)
 		repliedToBot := msg.ReplyToMessage != nil &&
 			msg.ReplyToMessage.From != nil &&
-			msg.ReplyToMessage.From.ID == h.Bot.Self.ID
+			msg.ReplyToMessage.From.ID == h.botUser.ID
 		hasVoiceOrAudio := msg.Voice != nil || msg.Audio != nil
 
 		if !mentioned && !repliedToBot && !hasVoiceOrAudio {
@@ -89,7 +96,7 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 
 	// Strip @mention
 	if !isPrivate {
-		prompt = stripBotMention(prompt, h.Bot.Self.UserName)
+		prompt = stripBotMention(prompt, h.botUser.Username)
 	} else {
 		prompt = strings.TrimSpace(prompt)
 	}
@@ -103,7 +110,7 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// Inject structured sender context
-	senderName := msg.From.UserName
+	senderName := msg.From.Username
 	displayName := msg.From.FirstName
 	if msg.From.LastName != "" {
 		displayName += " " + msg.From.LastName
@@ -122,6 +129,9 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 		"is_bot":       false,
 		"chat_type":    msg.Chat.Type,
 	}
+	if isForumTopic(msg) {
+		senderCtx["topic_thread_id"] = threadID
+	}
 	senderJSON, _ := json.Marshal(senderCtx)
 	promptWithSender := fmt.Sprintf("<sender_context>\n%s\n</sender_context>\n\n%s", string(senderJSON), prompt)
 
@@ -134,7 +144,7 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 		} else {
 			// Telegram sends photos as []PhotoSize — last element is largest
 			largest := msg.Photo[len(msg.Photo)-1]
-			localPath, err := h.downloadFile(largest.FileID, "photo.jpg", tmpDir)
+			localPath, err := h.downloadFile(ctx, b, largest.FileID, "photo.jpg", tmpDir)
 			if err != nil {
 				slog.Error("failed to download photo", "error", err)
 			} else {
@@ -150,9 +160,12 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 		if h.Transcriber == nil {
 			slog.Warn("voice message received but [transcribe] is not configured, skipping")
 			if prompt == "" {
-				reply := tgbotapi.NewMessage(chatID, "⚠️ Voice transcription is not configured. Please set up `[transcribe]` in config.")
-				reply.ReplyToMessageID = msg.MessageID
-				h.Bot.Send(reply)
+				b.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID:          chatID,
+					MessageThreadID: threadID,
+					Text:            "⚠️ Voice transcription is not configured. Please set up `[transcribe]` in config.",
+					ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+				})
 				return
 			}
 		} else {
@@ -172,7 +185,7 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 					}
 				}
 
-				localPath, err := h.downloadFile(fileID, filename, tmpDir)
+				localPath, err := h.downloadFile(ctx, b, fileID, filename, tmpDir)
 				if err != nil {
 					slog.Error("failed to download audio", "error", err)
 				} else {
@@ -200,16 +213,19 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 	slog.Debug("processing telegram message",
 		"chat_id", chatID,
 		"session_key", sessionKey,
+		"thread_id", threadID,
 		"has_photo", hasPhoto,
 		"has_voice", hasVoice || hasAudio,
 	)
 
 	// Send initial "thinking" message as a reply
-	reply := tgbotapi.NewMessage(chatID, "💭 _thinking..._")
-	reply.ParseMode = "Markdown"
-	reply.ReplyToMessageID = msg.MessageID
-
-	sent, err := h.Bot.Send(reply)
+	sent, err := b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Text:            "💭 _thinking..._",
+		ParseMode:       models.ParseModeMarkdownV1,
+		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+	})
 	if err != nil {
 		slog.Error("failed to send thinking message", "error", err)
 		return
@@ -217,23 +233,26 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 
 	// Get or create ACP session
 	if err := h.Pool.GetOrCreate(sessionKey); err != nil {
-		edit := tgbotapi.NewEditMessageText(chatID, sent.MessageID, fmt.Sprintf("⚠️ Failed to start agent: %v", err))
-		h.Bot.Send(edit)
+		b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: sent.ID,
+			Text:      fmt.Sprintf("⚠️ Failed to start agent: %v", err),
+		})
 		slog.Error("pool error", "error", err)
 		return
 	}
 
 	reactions := NewStatusReactionController(
 		h.ReactionsConfig.Enabled,
-		h.Bot,
+		b,
 		chatID,
-		msg.MessageID,
+		msg.ID,
 		h.ReactionsConfig.Emojis,
 		h.ReactionsConfig.Timing,
 	)
 	reactions.SetQueued()
 
-	result := h.streamPrompt(sessionKey, contentBlocks, chatID, sent.MessageID, reactions)
+	result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
 
 	// Cleanup downloaded images
 	for _, p := range imagePaths {
@@ -249,17 +268,17 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 	}
 }
 
-func (h *Handler) handleCommand(chatID int64, msgID int, cmd *command.Command) {
+func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msgID int, cmd *command.Command) {
 	var response string
 
 	switch cmd.Name {
 	case command.CmdSessions:
 		response = command.ExecuteSessions(h.Pool)
 	case command.CmdInfo:
-		sessionKey := fmt.Sprintf("tg:%d", chatID)
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		response = command.ExecuteInfo(h.Pool, sessionKey)
 	case command.CmdReset:
-		sessionKey := fmt.Sprintf("tg:%d", chatID)
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		response = command.ExecuteReset(h.Pool, sessionKey)
 	default:
 		return
@@ -268,23 +287,34 @@ func (h *Handler) handleCommand(chatID int64, msgID int, cmd *command.Command) {
 	chunks := platform.SplitMessage(response, 4096)
 	for _, chunk := range chunks {
 		converted := convertToTelegramMarkdown(chunk)
-		reply := tgbotapi.NewMessage(chatID, converted)
-		reply.ParseMode = "Markdown"
-		reply.ReplyToMessageID = msgID
-		if _, err := h.Bot.Send(reply); err != nil {
+		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            converted,
+			ParseMode:       models.ParseModeMarkdownV1,
+			ReplyParameters: &models.ReplyParameters{MessageID: msgID},
+		})
+		if err != nil {
 			// Fallback to plain text if markdown fails
-			plain := tgbotapi.NewMessage(chatID, chunk)
-			plain.ReplyToMessageID = msgID
-			h.Bot.Send(plain)
+			slog.Debug("telegram markdown send failed, retrying plain", "error", err)
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID:          chatID,
+				MessageThreadID: threadID,
+				Text:            chunk,
+				ReplyParameters: &models.ReplyParameters{MessageID: msgID},
+			})
 		}
 	}
 }
 
 func (h *Handler) streamPrompt(
+	ctx context.Context,
+	b *bot.Bot,
 	sessionKey string,
 	content []acp.ContentBlock,
 	chatID int64,
 	msgID int,
+	threadID int,
 	reactions *StatusReactionController,
 ) error {
 	return h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
@@ -325,8 +355,12 @@ func (h *Handler) streamPrompt(
 
 					if content != lastContent {
 						preview := platform.TruncateUTF8(content, 4000, "\n…")
-						edit := tgbotapi.NewEditMessageText(chatID, msgID, preview)
-						if _, err := h.Bot.Send(edit); err != nil {
+						_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+							ChatID:    chatID,
+							MessageID: msgID,
+							Text:      preview,
+						})
+						if err != nil {
 							slog.Debug("telegram edit message failed", "error", err)
 						}
 						lastContent = content
@@ -396,8 +430,11 @@ func (h *Handler) streamPrompt(
 		close(done)
 
 		if promptErr != nil {
-			edit := tgbotapi.NewEditMessageText(chatID, msgID, fmt.Sprintf("⚠️ %v", promptErr))
-			h.Bot.Send(edit)
+			b.EditMessageText(ctx, &bot.EditMessageTextParams{
+				ChatID:    chatID,
+				MessageID: msgID,
+				Text:      fmt.Sprintf("⚠️ %v", promptErr),
+			})
 			return promptErr
 		}
 
@@ -409,24 +446,36 @@ func (h *Handler) streamPrompt(
 
 		chunks := platform.SplitMessage(finalContent, 4096)
 		for i, chunk := range chunks {
-			// Convert GFM **bold** to Telegram *bold* and try Markdown parse mode.
-			// If Telegram rejects the markdown, fall back to plain text.
 			converted := convertToTelegramMarkdown(chunk)
 			if i == 0 {
-				edit := tgbotapi.NewEditMessageText(chatID, msgID, converted)
-				edit.ParseMode = "Markdown"
-				if _, err := h.Bot.Send(edit); err != nil {
+				_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+					ChatID:    chatID,
+					MessageID: msgID,
+					Text:      converted,
+					ParseMode: models.ParseModeMarkdownV1,
+				})
+				if err != nil {
 					slog.Debug("telegram markdown edit failed, retrying plain", "error", err)
-					edit2 := tgbotapi.NewEditMessageText(chatID, msgID, chunk)
-					h.Bot.Send(edit2)
+					b.EditMessageText(ctx, &bot.EditMessageTextParams{
+						ChatID:    chatID,
+						MessageID: msgID,
+						Text:      chunk,
+					})
 				}
 			} else {
-				newMsg := tgbotapi.NewMessage(chatID, converted)
-				newMsg.ParseMode = "Markdown"
-				if _, err := h.Bot.Send(newMsg); err != nil {
+				_, err := b.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID:          chatID,
+					MessageThreadID: threadID,
+					Text:            converted,
+					ParseMode:       models.ParseModeMarkdownV1,
+				})
+				if err != nil {
 					slog.Debug("telegram markdown send failed, retrying plain", "error", err)
-					plain := tgbotapi.NewMessage(chatID, chunk)
-					h.Bot.Send(plain)
+					b.SendMessage(ctx, &bot.SendMessageParams{
+						ChatID:          chatID,
+						MessageThreadID: threadID,
+						Text:            chunk,
+					})
 				}
 			}
 		}
@@ -445,14 +494,60 @@ func convertToTelegramMarkdown(text string) string {
 	return gfmBoldRe.ReplaceAllString(text, "*$1*")
 }
 
-func buildSessionKey(msg *tgbotapi.Message) string {
+// isForumTopic returns true when this message is in a forum topic thread.
+func isForumTopic(msg *models.Message) bool {
+	return msg.Chat.IsForum && msg.IsTopicMessage
+}
+
+// topicThreadID returns the topic thread ID if the message is in a forum topic, 0 otherwise.
+func topicThreadID(msg *models.Message) int {
+	if msg.IsTopicMessage {
+		return msg.MessageThreadID
+	}
+	return 0
+}
+
+// buildSessionKey creates a session pool key that includes the topic thread ID
+// for forum supergroups: "tg:{chatID}:{threadID}", or "tg:{chatID}" otherwise.
+func buildSessionKey(msg *models.Message) string {
+	if isForumTopic(msg) {
+		return fmt.Sprintf("tg:%d:%d", msg.Chat.ID, msg.MessageThreadID)
+	}
 	return fmt.Sprintf("tg:%d", msg.Chat.ID)
 }
 
-func isBotMentioned(msg *tgbotapi.Message, botUsername string) bool {
+// buildSessionKeyFromChat creates a session key from chatID and optional threadID.
+// Used by command handlers where the full Message is not available.
+func buildSessionKeyFromChat(chatID int64, threadID int) string {
+	if threadID != 0 {
+		return fmt.Sprintf("tg:%d:%d", chatID, threadID)
+	}
+	return fmt.Sprintf("tg:%d", chatID)
+}
+
+// extractCommand returns the bot command name (without /) if the message starts
+// with a /command entity, or empty string otherwise.
+func extractCommand(msg *models.Message) string {
+	for _, e := range msg.Entities {
+		if e.Type == models.MessageEntityTypeBotCommand && e.Offset == 0 {
+			cmd := msg.Text[e.Offset : e.Offset+e.Length]
+			if strings.HasPrefix(cmd, "/") {
+				cmd = cmd[1:]
+			}
+			// Remove @botname suffix (e.g., "reset@mybot" → "reset")
+			if idx := strings.Index(cmd, "@"); idx != -1 {
+				cmd = cmd[:idx]
+			}
+			return cmd
+		}
+	}
+	return ""
+}
+
+func isBotMentioned(msg *models.Message, botUsername string) bool {
 	// Check text entities
 	for _, entity := range msg.Entities {
-		if entity.Type == "mention" {
+		if entity.Type == models.MessageEntityTypeMention {
 			mention := msg.Text[entity.Offset : entity.Offset+entity.Length]
 			if strings.EqualFold(mention, "@"+botUsername) {
 				return true
@@ -461,7 +556,7 @@ func isBotMentioned(msg *tgbotapi.Message, botUsername string) bool {
 	}
 	// Check caption entities (photos with captions)
 	for _, entity := range msg.CaptionEntities {
-		if entity.Type == "mention" {
+		if entity.Type == models.MessageEntityTypeMention {
 			mention := msg.Caption[entity.Offset : entity.Offset+entity.Length]
 			if strings.EqualFold(mention, "@"+botUsername) {
 				return true
@@ -517,11 +612,13 @@ func buildPromptContent(base string, imagePaths, transcriptions []string) string
 	return base + extra.String()
 }
 
-func (h *Handler) downloadFile(fileID, filename, tmpDir string) (string, error) {
-	fileURL, err := h.Bot.GetFileDirectURL(fileID)
+func (h *Handler) downloadFile(ctx context.Context, b *bot.Bot, fileID, filename, tmpDir string) (string, error) {
+	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 	if err != nil {
-		return "", fmt.Errorf("get file URL: %w", err)
+		return "", fmt.Errorf("get file: %w", err)
 	}
+
+	fileURL := b.FileDownloadLink(file)
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(fileURL)
