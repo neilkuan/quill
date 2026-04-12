@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/go-telegram/bot/models"
+	"github.com/neilkuan/openab-go/platform"
 )
 
 func TestBuildSessionKey(t *testing.T) {
@@ -327,6 +328,7 @@ func TestBuildPromptContent_Telegram(t *testing.T) {
 		base           string
 		imagePaths     []string
 		transcriptions []string
+		files          []platform.FileAttachment
 		wantContains   []string
 	}{
 		{
@@ -355,11 +357,26 @@ func TestBuildPromptContent_Telegram(t *testing.T) {
 				"</voice_transcription>",
 			},
 		},
+		{
+			name: "with file attachments",
+			base: "check this file",
+			files: []platform.FileAttachment{
+				{Filename: "notes.txt", ContentType: "text/plain", Size: 256, LocalPath: "/tmp/789_notes.txt"},
+			},
+			wantContains: []string{
+				"<attached_files>",
+				"notes.txt",
+				"text/plain",
+				"256 bytes",
+				"/tmp/789_notes.txt",
+				"</attached_files>",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildPromptContent(tt.base, tt.imagePaths, tt.transcriptions)
+			got := buildPromptContent(tt.base, tt.imagePaths, tt.transcriptions, tt.files)
 			for _, want := range tt.wantContains {
 				if !contains(got, want) {
 					t.Errorf("buildPromptContent() missing %q in:\n%s", want, got)

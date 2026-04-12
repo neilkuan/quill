@@ -78,7 +78,8 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	hasImages := len(m.Attachments) > 0 && hasImageAttachments(m.Attachments)
 	hasAudio := len(m.Attachments) > 0 && hasAudioAttachments(m.Attachments)
-	if prompt == "" && !hasImages && !hasAudio {
+	hasFiles := len(m.Attachments) > 0 && hasFileAttachments(m.Attachments)
+	if prompt == "" && !hasImages && !hasAudio && !hasFiles {
 		return
 	}
 
@@ -189,12 +190,43 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
+	// Download non-image, non-audio file attachments to .tmp/
+	var fileAttachments []platform.FileAttachment
+	if hasFiles {
+		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
+		if err := os.MkdirAll(tmpDir, 0700); err != nil {
+			slog.Error("failed to create temp file directory", "path", tmpDir, "error", err)
+		} else {
+			for _, att := range m.Attachments {
+				if isImageMime(att.ContentType, att.Filename) || isAudioMime(att.ContentType, att.Filename) {
+					continue
+				}
+				if att.Size > 25*1024*1024 {
+					slog.Warn("skipping large file attachment", "filename", att.Filename, "size", att.Size)
+					continue
+				}
+				localPath, err := downloadFileToDisk(att.URL, att.Filename, tmpDir)
+				if err != nil {
+					slog.Error("failed to download file attachment", "url", att.URL, "error", err)
+					continue
+				}
+				fileAttachments = append(fileAttachments, platform.FileAttachment{
+					Filename:    att.Filename,
+					ContentType: att.ContentType,
+					Size:        att.Size,
+					LocalPath:   localPath,
+				})
+				slog.Debug("downloaded file attachment", "filename", att.Filename, "path", localPath)
+			}
+		}
+	}
+
 	// Build content blocks
-	contentText := buildPromptContent(promptWithSender, imagePaths, transcriptions)
+	contentText := buildPromptContent(promptWithSender, imagePaths, transcriptions, fileAttachments)
 	var contentBlocks []acp.ContentBlock
 	contentBlocks = append(contentBlocks, acp.TextBlock(contentText))
 
-	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "audio_transcriptions", len(transcriptions), "in_thread", inThread)
+	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "audio_transcriptions", len(transcriptions), "files", len(fileAttachments), "in_thread", inThread)
 
 	var threadID string
 	if inThread {
@@ -233,10 +265,15 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	finalText, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions)
 
-	// Cleanup downloaded images
+	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
 		if err := os.Remove(p); err != nil {
 			slog.Debug("failed to remove tmp image", "path", p, "error", err)
+		}
+	}
+	for _, f := range fileAttachments {
+		if err := os.Remove(f.LocalPath); err != nil {
+			slog.Debug("failed to remove tmp file", "path", f.LocalPath, "error", err)
 		}
 	}
 
@@ -664,7 +701,7 @@ func (h *Handler) buildVoiceInfo(userID string) *command.VoiceInfo {
 
 // --- Prompt content builder ---
 
-func buildPromptContent(base string, imagePaths, transcriptions []string) string {
+func buildPromptContent(base string, imagePaths, transcriptions []string, files []platform.FileAttachment) string {
 	var extra strings.Builder
 
 	if len(imagePaths) > 0 {
@@ -683,6 +720,8 @@ func buildPromptContent(base string, imagePaths, transcriptions []string) string
 		}
 		extra.WriteString("</voice_transcription>\nThe above is a transcription of the user's voice message. Please respond to it.")
 	}
+
+	extra.WriteString(platform.FormatFileBlock(files))
 
 	return base + extra.String()
 }
@@ -790,6 +829,59 @@ func isAudioMime(contentType, filename string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
 	_, ok := audioExtensions[ext]
 	return ok
+}
+
+// --- File attachment helpers ---
+
+func hasFileAttachments(attachments []*discordgo.MessageAttachment) bool {
+	for _, att := range attachments {
+		if !isImageMime(att.ContentType, att.Filename) && !isAudioMime(att.ContentType, att.Filename) {
+			return true
+		}
+	}
+	return false
+}
+
+func downloadFileToDisk(url, filename, tmpDir string) (string, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	safeFilename := filepath.Base(filename)
+	localName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), safeFilename)
+	localPath := filepath.Join(tmpDir, localName)
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		return "", fmt.Errorf("create file failed: %w", err)
+	}
+
+	// Discord attachment limit is 25MB
+	written, err := io.Copy(f, io.LimitReader(resp.Body, 25*1024*1024+1))
+	if err != nil {
+		f.Close()
+		os.Remove(localPath)
+		return "", fmt.Errorf("write failed: %w", err)
+	}
+	if written > 25*1024*1024 {
+		f.Close()
+		os.Remove(localPath)
+		return "", fmt.Errorf("file too large (>25MB)")
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(localPath)
+		return "", fmt.Errorf("close file failed: %w", err)
+	}
+
+	return localPath, nil
 }
 
 func downloadAudioToFile(url, filename, tmpDir string) (string, error) {
