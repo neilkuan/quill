@@ -114,7 +114,14 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	hasAudio := msg.Audio != nil
 	hasDocument := msg.Document != nil
 
-	if prompt == "" && !hasPhoto && !hasVoice && !hasAudio && !hasDocument {
+	// Also pick up attachments from the replied-to message.
+	// On mobile Telegram, users often can't attach a file and @mention the bot
+	// in the same message, so they send the file first, then reply to it.
+	replyMsg := msg.ReplyToMessage
+	hasReplyPhoto := replyMsg != nil && len(replyMsg.Photo) > 0 && !hasPhoto
+	hasReplyDocument := replyMsg != nil && replyMsg.Document != nil && !hasDocument
+
+	if prompt == "" && !hasPhoto && !hasVoice && !hasAudio && !hasDocument && !hasReplyPhoto && !hasReplyDocument {
 		return
 	}
 
@@ -144,15 +151,21 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	senderJSON, _ := json.Marshal(senderCtx)
 	promptWithSender := fmt.Sprintf("<sender_context>\n%s\n</sender_context>\n\n%s", string(senderJSON), prompt)
 
-	// Download photos
+	// Download photos (from current message or replied-to message)
 	var imagePaths []string
-	if hasPhoto {
+	if hasPhoto || hasReplyPhoto {
 		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
 		if err := os.MkdirAll(tmpDir, 0700); err != nil {
 			slog.Error("failed to create temp directory", "error", err)
 		} else {
+			var photos []models.PhotoSize
+			if hasPhoto {
+				photos = msg.Photo
+			} else {
+				photos = replyMsg.Photo
+			}
 			// Telegram sends photos as []PhotoSize — last element is largest
-			largest := msg.Photo[len(msg.Photo)-1]
+			largest := photos[len(photos)-1]
 			localPath, err := h.downloadFile(ctx, b, largest.FileID, "photo.jpg", tmpDir)
 			if err != nil {
 				slog.Error("failed to download photo", "error", err)
@@ -214,14 +227,19 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		}
 	}
 
-	// Download document attachments (non-image, non-audio files)
+	// Download document attachments (from current message or replied-to message)
 	var fileAttachments []platform.FileAttachment
-	if hasDocument {
+	if hasDocument || hasReplyDocument {
 		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
 		if err := os.MkdirAll(tmpDir, 0700); err != nil {
 			slog.Error("failed to create temp directory", "error", err)
 		} else {
-			doc := msg.Document
+			var doc *models.Document
+			if hasDocument {
+				doc = msg.Document
+			} else {
+				doc = replyMsg.Document
+			}
 			// Telegram Bot API getFile limit is 20MB
 			if doc.FileSize > 20*1024*1024 {
 				slog.Warn("skipping large document", "filename", doc.FileName, "size", doc.FileSize)
@@ -266,9 +284,9 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		"chat_id", chatID,
 		"session_key", sessionKey,
 		"thread_id", threadID,
-		"has_photo", hasPhoto,
+		"has_photo", hasPhoto || hasReplyPhoto,
 		"has_voice", hasVoice || hasAudio,
-		"has_document", hasDocument,
+		"has_document", hasDocument || hasReplyDocument,
 	)
 
 	// Send initial "thinking" message as a reply
