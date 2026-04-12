@@ -4,7 +4,7 @@
 
 一個輕量、安全、雲原生的 **ACP（Agent Client Protocol）橋接器**，連接 **Discord** 和 **Telegram** 與任何 ACP 相容的 coding CLI — [Kiro CLI](https://kiro.dev)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex](https://github.com/openai/codex)、[Gemini CLI](https://github.com/google-gemini/gemini-cli) 等。
 
-這是 [openab](https://github.com/neilkuan/openab)（原本以 Rust 撰寫）的 **Go 重寫版本**。
+這是 [openab](https://github.com/openabdev/openab)（原本以 Rust 撰寫）的 **Go 重寫版本**。
 
 ---
 
