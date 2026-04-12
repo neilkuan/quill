@@ -59,24 +59,28 @@ Chat message → Platform Adapter → SessionPool → AcpConnection (stdin/stdou
 
 - **`acp/`** — Agent Communication Protocol implementation (platform-agnostic)
   - `connection.go` — Spawns an agent subprocess, manages stdin/stdout JSON-RPC communication, handles request/response correlation via pending map, auto-approves `session/request_permission` requests, streams notifications via a subscriber channel. `promptMu` serializes prompts — only one at a time per connection.
-  - `pool.go` — `SessionPool` maps thread keys to `AcpConnection` instances with max-session limits and TTL-based idle cleanup. Uses double-checked locking (RLock → RUnlock → Lock) for GetOrCreate.
+  - `pool.go` — `SessionPool` maps thread keys (`discord:{id}` / `tg:{id}`) to `AcpConnection` instances. LRU eviction when pool is full, TTL-based idle cleanup, and query methods (`ListSessions`, `GetSessionInfo`, `KillSession`, `Stats`). Uses double-checked locking (RLock → RUnlock → Lock) for GetOrCreate.
   - `protocol.go` — JSON-RPC message types and ACP event classification (`ClassifyNotification` parses session updates into typed events: text chunks, thinking, tool calls, status)
+
+- **`command/`** — Shared bot command logic (`sessions`/`info`/`reset`). `ParseCommand` detects commands from text, `Execute*` functions format responses using pool query methods. Used by both Discord and Telegram handlers.
+
+- **`api/`** — Optional HTTP API server for session monitoring. Endpoints: `GET /api/sessions`, `DELETE /api/sessions/{key}`, `GET /api/health`. Enabled via `[api]` config section.
 
 - **`discord/`** — Discord platform adapter
   - `adapter.go` — `Adapter` struct implementing `platform.Platform`, wraps discordgo session lifecycle
-  - `handler.go` — Message handler: mention/thread detection, sender context injection (`openab.sender.v1` schema), image attachment download to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (1.5s ticker, truncates to 1900 chars during streaming, splits into multiple messages only on final edit)
+  - `handler.go` — Message handler: mention/thread detection, sender context injection (`openab.sender.v1` schema), image attachment download to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (1.5s ticker, truncates to 1900 chars during streaming, splits into multiple messages only on final edit). Registers Discord Slash Commands (`/sessions`, `/info`, `/reset`) on ready, handles interactions via `OnInteractionCreate`. Plain text commands also supported as fallback.
   - `reactions.go` — `StatusReactionController` state machine for emoji-based status indicators (queued → thinking → tool → done/error) with debounce, stall detection (soft 🥱 / hard 😨), and tool classification (coding/web/generic)
 
 - **`telegram/`** — Telegram platform adapter
-  - `adapter.go` — `Adapter` struct implementing `platform.Platform`, wraps telegram-bot-api long-polling lifecycle
-  - `handler.go` — Message handler: @mention/reply-to-bot detection in groups, all messages in private chats, sender context injection (`openab.sender.v1` schema), photo download (largest PhotoSize) and voice/audio transcription to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (2s ticker for Telegram rate limits, 4096-char message limit)
+  - `adapter.go` — `Adapter` struct implementing `platform.Platform`, wraps telegram-bot-api long-polling lifecycle. Registers BotCommands (`/sessions`, `/info`, `/reset`) via `setMyCommands` on startup.
+  - `handler.go` — Message handler: native `/command` detection via `msg.IsCommand()`, @mention/reply-to-bot detection in groups, all messages in private chats, sender context injection (`openab.sender.v1` schema), photo download (largest PhotoSize) and voice/audio transcription to `.tmp/`, streaming prompt responses with a background edit-streaming goroutine (2s ticker for Telegram rate limits, 4096-char message limit). Plain text commands also supported as fallback.
   - `reactions.go` — `StatusReactionController` using Telegram `setMessageReaction` API with debounce and stall detection, same state machine as Discord
 
 - **`transcribe/`** — Voice-to-text via OpenAI Whisper API. Defines a `Transcriber` interface and `OpenAITranscriber` implementation. Enabled when `transcribe.api_key` is set in config; injected into platform adapters that support voice messages (Discord and Telegram).
 
 - **`config/`** — TOML configuration with `${ENV_VAR}` expansion and sensible defaults. Platform-specific configs are nested (`discord.reactions.emojis`, etc.). Having a `bot_token` in a platform section auto-enables that platform. Reference config: `config.toml.example`.
 
-- **`main.go`** — Loads config, creates session pool, creates transcriber (if configured), registers all enabled `platform.Platform` adapters, starts them, runs idle-session cleanup (60s tick), and handles graceful shutdown via SIGINT/SIGTERM.
+- **`main.go`** — Loads config, creates session pool, creates transcriber (if configured), starts optional HTTP API server, registers all enabled `platform.Platform` adapters, starts them, runs idle-session cleanup (60s tick), and handles graceful shutdown via SIGINT/SIGTERM.
 
 ### Adding a new platform
 

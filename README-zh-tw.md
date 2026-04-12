@@ -113,13 +113,13 @@ api_key = "${OPENAI_API_KEY}"
 
 ###### Bot 指令
 
-在群組中以 @mention 方式傳送這些指令給 bot：
+指令已註冊為平台原生指令 — Discord Slash Commands 和 Telegram BotCommands — 輸入 `/` 即可在自動完成選單中看到。也支援純文字方式（如 `@bot sessions`）作為 fallback。
 
 | 指令 | 說明 |
 |------|------|
-| `sessions` | 列出所有活躍的 session 及統計資訊 |
-| `info` | 顯示當前討論串/聊天的 session 詳情 |
-| `reset` | 終止當前 session（下一則訊息會建立新的） |
+| `/sessions` | 列出所有活躍的 session 及統計資訊 |
+| `/info` | 顯示當前討論串/聊天的 session 詳情 |
+| `/reset` | 終止當前 session（下一則訊息會建立新的） |
 
 ###### HTTP API（選用）
 

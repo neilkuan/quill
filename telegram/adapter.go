@@ -40,6 +40,18 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber tr
 func (a *Adapter) Start() error {
 	slog.Info("starting telegram adapter", "bot", a.bot.Self.UserName)
 
+	// Register bot commands for the / menu
+	cmds := tgbotapi.NewSetMyCommands(
+		tgbotapi.BotCommand{Command: "sessions", Description: "List all active agent sessions"},
+		tgbotapi.BotCommand{Command: "info", Description: "Show current chat session details"},
+		tgbotapi.BotCommand{Command: "reset", Description: "Reset the current session"},
+	)
+	if _, err := a.bot.Request(cmds); err != nil {
+		slog.Warn("failed to register telegram bot commands", "error", err)
+	} else {
+		slog.Info("registered telegram bot commands")
+	}
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 

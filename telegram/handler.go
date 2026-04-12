@@ -55,6 +55,15 @@ func (h *Handler) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Handle native /commands (works in both private and group chats)
+	if msg.IsCommand() {
+		cmdName := msg.Command() // "sessions", "info", "reset"
+		if cmd, ok := command.ParseCommand(cmdName); ok {
+			h.handleCommand(chatID, msg.MessageID, cmd)
+			return
+		}
+	}
+
 	isPrivate := msg.Chat.IsPrivate()
 
 	// In group chats, respond to @mentions, replies to the bot,

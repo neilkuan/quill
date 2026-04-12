@@ -113,13 +113,13 @@ Built-in bot commands and HTTP API for managing agent sessions.
 
 ###### Bot Commands
 
-Send these as messages to the bot (with @mention in groups):
+Commands are registered as native platform commands — Discord Slash Commands and Telegram BotCommands — so they appear in the `/` autocomplete menu. Plain text (e.g., `@bot sessions`) is also supported as fallback.
 
 | Command | Description |
 |---------|-------------|
-| `sessions` | List all active sessions with stats |
-| `info` | Show current thread/chat session details |
-| `reset` | Kill current session (new one on next message) |
+| `/sessions` | List all active sessions with stats |
+| `/info` | Show current thread/chat session details |
+| `/reset` | Kill current session (new one on next message) |
 
 ###### HTTP API (Optional)
 

@@ -21,7 +21,10 @@ func TestParseCommand(t *testing.T) {
 		{"", "", false},
 		{"   sessions   ", CmdSessions, true},
 		{"reset now", CmdReset, true},
-		{"session", "", false}, // not "sessions"
+		{"session", "", false},  // not "sessions"
+		// Telegram msg.Command() returns bare name without /
+		// Discord slash commands also use bare names
+		// Both pass through ParseCommand correctly
 	}
 
 	for _, tt := range tests {

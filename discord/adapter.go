@@ -38,6 +38,7 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber tra
 
 	dg.AddHandler(h.OnMessageCreate)
 	dg.AddHandler(h.OnReady)
+	dg.AddHandler(h.OnInteractionCreate)
 
 	return &Adapter{session: dg}, nil
 }

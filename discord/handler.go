@@ -272,6 +272,62 @@ func (h *Handler) handleCommand(s *discordgo.Session, m *discordgo.MessageCreate
 
 func (h *Handler) OnReady(s *discordgo.Session, r *discordgo.Ready) {
 	slog.Info("discord bot connected", "user", r.User.Username)
+	h.registerSlashCommands(s, r.User.ID)
+}
+
+// slashCommands defines the Discord Application Commands to register.
+var slashCommands = []*discordgo.ApplicationCommand{
+	{
+		Name:        "sessions",
+		Description: "List all active agent sessions",
+	},
+	{
+		Name:        "info",
+		Description: "Show current thread/channel session details",
+	},
+	{
+		Name:        "reset",
+		Description: "Reset the current session (kills agent, fresh start on next message)",
+	},
+}
+
+func (h *Handler) registerSlashCommands(s *discordgo.Session, appID string) {
+	for _, cmd := range slashCommands {
+		if _, err := s.ApplicationCommandCreate(appID, "", cmd); err != nil {
+			slog.Error("failed to register slash command", "command", cmd.Name, "error", err)
+		} else {
+			slog.Info("registered slash command", "command", "/"+cmd.Name)
+		}
+	}
+}
+
+func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i.Type != discordgo.InteractionApplicationCommand {
+		return
+	}
+
+	data := i.ApplicationCommandData()
+	var response string
+
+	switch data.Name {
+	case command.CmdSessions:
+		response = command.ExecuteSessions(h.Pool)
+	case command.CmdInfo:
+		threadKey := buildSessionKey(i.ChannelID)
+		response = command.ExecuteInfo(h.Pool, threadKey)
+	case command.CmdReset:
+		threadKey := buildSessionKey(i.ChannelID)
+		response = command.ExecuteReset(h.Pool, threadKey)
+	default:
+		return
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: response,
+		},
+	})
 }
 
 func streamPrompt(
