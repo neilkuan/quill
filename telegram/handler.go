@@ -112,8 +112,9 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	hasPhoto := len(msg.Photo) > 0
 	hasVoice := msg.Voice != nil
 	hasAudio := msg.Audio != nil
+	hasDocument := msg.Document != nil
 
-	if prompt == "" && !hasPhoto && !hasVoice && !hasAudio {
+	if prompt == "" && !hasPhoto && !hasVoice && !hasAudio && !hasDocument {
 		return
 	}
 
@@ -213,8 +214,50 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		}
 	}
 
+	// Download document attachments (non-image, non-audio files)
+	var fileAttachments []platform.FileAttachment
+	if hasDocument {
+		tmpDir := filepath.Join(h.Pool.WorkingDir(), ".tmp")
+		if err := os.MkdirAll(tmpDir, 0700); err != nil {
+			slog.Error("failed to create temp directory", "error", err)
+		} else {
+			doc := msg.Document
+			// Telegram Bot API getFile limit is 20MB
+			if doc.FileSize > 20*1024*1024 {
+				slog.Warn("skipping large document", "filename", doc.FileName, "size", doc.FileSize)
+				b.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID:          chatID,
+					MessageThreadID: threadID,
+					Text:            fmt.Sprintf("⚠️ File `%s` exceeds the 20 MB limit (%d MB), skipping.", doc.FileName, doc.FileSize/(1024*1024)),
+					ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+				})
+			} else {
+				filename := doc.FileName
+				if filename == "" {
+					filename = "document"
+				}
+				localPath, err := h.downloadFile(ctx, b, doc.FileID, filename, tmpDir)
+				if err != nil {
+					slog.Error("failed to download document", "filename", filename, "error", err)
+				} else {
+					contentType := doc.MimeType
+					if contentType == "" {
+						contentType = "application/octet-stream"
+					}
+					fileAttachments = append(fileAttachments, platform.FileAttachment{
+						Filename:    filename,
+						ContentType: contentType,
+						Size:        int(doc.FileSize),
+						LocalPath:   localPath,
+					})
+					slog.Debug("downloaded telegram document", "filename", filename, "path", localPath)
+				}
+			}
+		}
+	}
+
 	// Build content blocks
-	contentText := buildPromptContent(promptWithSender, imagePaths, transcriptions)
+	contentText := buildPromptContent(promptWithSender, imagePaths, transcriptions, fileAttachments)
 	contentBlocks := []acp.ContentBlock{acp.TextBlock(contentText)}
 
 	sessionKey := buildSessionKey(msg)
@@ -225,6 +268,7 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		"thread_id", threadID,
 		"has_photo", hasPhoto,
 		"has_voice", hasVoice || hasAudio,
+		"has_document", hasDocument,
 	)
 
 	// Send initial "thinking" message as a reply
@@ -263,10 +307,15 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 
 	finalText, result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
 
-	// Cleanup downloaded images
+	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
 		if err := os.Remove(p); err != nil {
 			slog.Debug("failed to remove tmp image", "path", p, "error", err)
+		}
+	}
+	for _, f := range fileAttachments {
+		if err := os.Remove(f.LocalPath); err != nil {
+			slog.Debug("failed to remove tmp file", "path", f.LocalPath, "error", err)
 		}
 	}
 
@@ -749,7 +798,7 @@ func composeDisplay(toolLines []string, text string) string {
 	return out.String()
 }
 
-func buildPromptContent(base string, imagePaths, transcriptions []string) string {
+func buildPromptContent(base string, imagePaths, transcriptions []string, files []platform.FileAttachment) string {
 	var extra strings.Builder
 
 	if len(imagePaths) > 0 {
@@ -768,6 +817,8 @@ func buildPromptContent(base string, imagePaths, transcriptions []string) string
 		}
 		extra.WriteString("</voice_transcription>\nThe above is a transcription of the user's voice message. Please respond to it.")
 	}
+
+	extra.WriteString(platform.FormatFileBlock(files))
 
 	return base + extra.String()
 }

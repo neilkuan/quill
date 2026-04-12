@@ -123,6 +123,58 @@ func TestTruncateUTF8_Truncates(t *testing.T) {
 	}
 }
 
+func TestFormatFileBlock_Empty(t *testing.T) {
+	result := FormatFileBlock(nil)
+	if result != "" {
+		t.Fatalf("expected empty string for nil files, got %q", result)
+	}
+	result = FormatFileBlock([]FileAttachment{})
+	if result != "" {
+		t.Fatalf("expected empty string for empty files, got %q", result)
+	}
+}
+
+func TestFormatFileBlock_SingleFile(t *testing.T) {
+	files := []FileAttachment{
+		{Filename: "script.py", ContentType: "text/x-python", Size: 1234, LocalPath: "/tmp/123_script.py"},
+	}
+	result := FormatFileBlock(files)
+	if !strings.Contains(result, "<attached_files>") {
+		t.Error("expected <attached_files> tag")
+	}
+	if !strings.Contains(result, "</attached_files>") {
+		t.Error("expected closing </attached_files> tag")
+	}
+	if !strings.Contains(result, "script.py") {
+		t.Error("expected filename")
+	}
+	if !strings.Contains(result, "text/x-python") {
+		t.Error("expected content type")
+	}
+	if !strings.Contains(result, "1234 bytes") {
+		t.Error("expected size")
+	}
+	if !strings.Contains(result, "/tmp/123_script.py") {
+		t.Error("expected local path")
+	}
+}
+
+func TestFormatFileBlock_MultipleFiles(t *testing.T) {
+	files := []FileAttachment{
+		{Filename: "a.txt", ContentType: "text/plain", Size: 100, LocalPath: "/tmp/1_a.txt"},
+		{Filename: "b.json", ContentType: "application/json", Size: 200, LocalPath: "/tmp/2_b.json"},
+	}
+	result := FormatFileBlock(files)
+	if !strings.Contains(result, "a.txt") || !strings.Contains(result, "b.json") {
+		t.Error("expected both filenames in output")
+	}
+	// Count occurrences of "[Attached file:"
+	count := strings.Count(result, "[Attached file:")
+	if count != 2 {
+		t.Errorf("expected 2 file entries, got %d", count)
+	}
+}
+
 func TestTruncateUTF8_CJK(t *testing.T) {
 	text := "你好世界這是測試"
 	result := TruncateUTF8(text, 10, "…")

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/neilkuan/openab-go/platform"
 )
 
 // --- isImageMime ---
@@ -443,14 +444,14 @@ func TestGithubURLRegex(t *testing.T) {
 // --- buildPromptContent ---
 
 func TestBuildPromptContent_TextOnly(t *testing.T) {
-	result := buildPromptContent("hello", nil, nil)
+	result := buildPromptContent("hello", nil, nil, nil)
 	if result != "hello" {
 		t.Errorf("expected 'hello', got %q", result)
 	}
 }
 
 func TestBuildPromptContent_WithImages(t *testing.T) {
-	result := buildPromptContent("hello", []string{"/tmp/img.png"}, nil)
+	result := buildPromptContent("hello", []string{"/tmp/img.png"}, nil, nil)
 	if !strings.Contains(result, "<attached_images>") {
 		t.Error("expected <attached_images> tag")
 	}
@@ -463,7 +464,7 @@ func TestBuildPromptContent_WithImages(t *testing.T) {
 }
 
 func TestBuildPromptContent_WithTranscriptions(t *testing.T) {
-	result := buildPromptContent("hello", nil, []string{"這是一段測試語音"})
+	result := buildPromptContent("hello", nil, []string{"這是一段測試語音"}, nil)
 	if !strings.Contains(result, "<voice_transcription>") {
 		t.Error("expected <voice_transcription> tag")
 	}
@@ -479,6 +480,7 @@ func TestBuildPromptContent_ImagesAndTranscriptions(t *testing.T) {
 	result := buildPromptContent("hello",
 		[]string{"/tmp/img.png"},
 		[]string{"這是語音內容"},
+		nil,
 	)
 	if !strings.Contains(result, "<attached_images>") {
 		t.Error("expected <attached_images> tag")
@@ -489,9 +491,51 @@ func TestBuildPromptContent_ImagesAndTranscriptions(t *testing.T) {
 }
 
 func TestBuildPromptContent_MultipleTranscriptions(t *testing.T) {
-	result := buildPromptContent("base", nil, []string{"第一段", "第二段"})
+	result := buildPromptContent("base", nil, []string{"第一段", "第二段"}, nil)
 	if !strings.Contains(result, "第一段") || !strings.Contains(result, "第二段") {
 		t.Error("expected both transcriptions in output")
+	}
+}
+
+func TestBuildPromptContent_WithFiles(t *testing.T) {
+	files := []platform.FileAttachment{
+		{Filename: "script.py", ContentType: "text/x-python", Size: 1234, LocalPath: "/tmp/123_script.py"},
+	}
+	result := buildPromptContent("hello", nil, nil, files)
+	if !strings.Contains(result, "<attached_files>") {
+		t.Error("expected <attached_files> tag")
+	}
+	if !strings.Contains(result, "script.py") {
+		t.Error("expected filename in output")
+	}
+	if !strings.Contains(result, "text/x-python") {
+		t.Error("expected content type in output")
+	}
+	if !strings.Contains(result, "1234 bytes") {
+		t.Error("expected file size in output")
+	}
+	if !strings.Contains(result, "/tmp/123_script.py") {
+		t.Error("expected local path in output")
+	}
+}
+
+func TestBuildPromptContent_AllTypes(t *testing.T) {
+	files := []platform.FileAttachment{
+		{Filename: "data.json", ContentType: "application/json", Size: 500, LocalPath: "/tmp/456_data.json"},
+	}
+	result := buildPromptContent("check this",
+		[]string{"/tmp/img.png"},
+		[]string{"語音內容"},
+		files,
+	)
+	if !strings.Contains(result, "<attached_images>") {
+		t.Error("expected <attached_images> tag")
+	}
+	if !strings.Contains(result, "<voice_transcription>") {
+		t.Error("expected <voice_transcription> tag")
+	}
+	if !strings.Contains(result, "<attached_files>") {
+		t.Error("expected <attached_files> tag")
 	}
 }
 
@@ -734,6 +778,129 @@ func TestDownloadAudioToFile_InvalidURL(t *testing.T) {
 	_, err := downloadAudioToFile("http://127.0.0.1:1/invalid", "voice.ogg", tmpDir)
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
+	}
+}
+
+// --- hasFileAttachments ---
+
+func TestHasFileAttachments(t *testing.T) {
+	tests := []struct {
+		name        string
+		attachments []*discordgo.MessageAttachment
+		expected    bool
+	}{
+		{
+			"no attachments",
+			nil,
+			false,
+		},
+		{
+			"only images",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "image/png", Filename: "photo.png"},
+			},
+			false,
+		},
+		{
+			"only audio",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "audio/ogg", Filename: "voice.ogg"},
+			},
+			false,
+		},
+		{
+			"one file",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "application/pdf", Filename: "doc.pdf"},
+			},
+			true,
+		},
+		{
+			"text file",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "text/plain", Filename: "notes.txt"},
+			},
+			true,
+		},
+		{
+			"mixed with image and file",
+			[]*discordgo.MessageAttachment{
+				{ContentType: "image/png", Filename: "photo.png"},
+				{ContentType: "application/json", Filename: "data.json"},
+			},
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := hasFileAttachments(tt.attachments)
+			if result != tt.expected {
+				t.Errorf("hasFileAttachments() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// --- downloadFileToDisk ---
+
+func TestDownloadFileToDisk_Success(t *testing.T) {
+	fileData := []byte(`{"key": "value"}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(fileData)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	path, err := downloadFileToDisk(server.URL, "data.json", tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasSuffix(path, "_data.json") {
+		t.Errorf("expected path ending with '_data.json', got %q", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read downloaded file: %v", err)
+	}
+	if string(data) != string(fileData) {
+		t.Errorf("file content mismatch: got %q, want %q", string(data), string(fileData))
+	}
+}
+
+func TestDownloadFileToDisk_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	_, err := downloadFileToDisk(server.URL, "data.json", tmpDir)
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
+func TestDownloadFileToDisk_PathTraversal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("data"))
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	path, err := downloadFileToDisk(server.URL, "../../etc/shadow", tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasPrefix(path, tmpDir) {
+		t.Errorf("path %q escaped tmpDir %q", path, tmpDir)
+	}
+	if !strings.HasSuffix(path, "_shadow") {
+		t.Errorf("expected sanitized filename ending with '_shadow', got %q", path)
 	}
 }
 
