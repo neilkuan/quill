@@ -1,5 +1,7 @@
 # openab-go
 
+[繁體中文](README-zh-tw.md) | English
+
 A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord** and **Telegram** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and more.
 
 This is a **Go rewrite** of [openab](https://github.com/neilkuan/openab) (originally in Rust).
