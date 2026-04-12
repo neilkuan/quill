@@ -194,12 +194,14 @@ openab-go/
 │   ├── adapter.go       # Telegram platform adapter (implements Platform interface)
 │   ├── handler.go       # Telegram message handler, mention/reply detection, edit streaming
 │   └── reactions.go     # Telegram reaction controller via setMessageReaction API
+├── scripts/
+│   └── release.sh       # Release automation (stable PR + RC tags)
 ├── Dockerfile           # Kiro CLI variant
 ├── Dockerfile.claude    # Claude Code variant
 ├── Dockerfile.codex     # Codex variant
 ├── Dockerfile.gemini    # Gemini CLI variant
 ├── config.toml.example  # Configuration reference
-├── VERSION              # Semver version (managed by tagpr)
+├── VERSION              # Semver version
 └── RELEASING.md         # Release workflow documentation
 ```
 
@@ -218,11 +220,11 @@ openab-go/
 
 ##### Releasing
 
-Releases use [tagpr](https://github.com/Songmu/tagpr) with a **"what you tested is what you ship"** philosophy:
+Releases follow a **"what you tested is what you ship"** philosophy using `scripts/release.sh`:
 
-1. **Merge PRs to main** → tagpr auto-opens a Release PR (bumps `VERSION`)
-2. **Tag a pre-release** (`v0.2.0-rc.1`) → full build of 4 image variants x 2 platforms
-3. **Merge the Release PR** → tagpr tags stable (`v0.2.0`) → promotes pre-release images (no rebuild)
+1. **Merge PRs to main** → `release.yml` auto-opens a Release PR (bumps `VERSION`)
+2. **Create RC tag** → `./scripts/release.sh --rc` → full build of 4 image variants x 2 platforms
+3. **Merge the Release PR** → `tag-on-merge.yml` auto-tags stable → promotes pre-release images (no rebuild)
 
 See [RELEASING.md](RELEASING.md) for the full workflow.
 

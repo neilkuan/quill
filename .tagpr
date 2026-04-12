@@ -1,8 +1,0 @@
-# tagpr configuration
-# see: https://github.com/Songmu/tagpr
-
-[tagpr]
-versionFile = "VERSION"
-releaseBranch = "main"
-changelog = true
-vPrefix = true
