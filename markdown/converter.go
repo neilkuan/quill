@@ -11,14 +11,20 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 )
+
+// codeBlockWidthThreshold is the max display column width a fenced code-block
+// table may occupy before ConvertTables falls back to bullets mode. Discord
+// and Telegram desktop chat panes show roughly 70-100 monospace columns; 80
+// is a safe choice that keeps tables on one line for most viewports.
+const codeBlockWidthThreshold = 80
 
 // TableMode controls how GFM tables are rewritten before being sent to a chat platform.
 type TableMode string
@@ -85,6 +91,12 @@ func ConvertTables(input string, mode TableMode) string {
 			rendered = renderBullets(tbl, src)
 		default:
 			rendered = renderCodeBlock(tbl, src)
+			// Chat panes don't word-wrap fenced code blocks; for tables wider
+			// than the viewport (common with multi-column Chinese content),
+			// fall back to bullets so users don't have to horizontal-scroll.
+			if maxLineWidth(rendered) > codeBlockWidthThreshold {
+				rendered = renderBullets(tbl, src)
+			}
 		}
 		repls = append(repls, replacement{start: start, end: end, text: rendered})
 		return ast.WalkSkipChildren, nil
@@ -219,7 +231,11 @@ func renderBullets(tbl *extast.Table, src []byte) string {
 	var b strings.Builder
 	for i, row := range body {
 		if i > 0 {
-			b.WriteByte('\n')
+			// Blank line between rows so users can see at a glance which
+			// bullets belong to the same record. Without this every row
+			// runs together and a 6-row × 4-col table becomes 24
+			// indistinguishable bullets.
+			b.WriteString("\n\n")
 		}
 		for j, cell := range row {
 			if j > 0 {
@@ -302,7 +318,7 @@ func columnWidths(rows [][]string) []int {
 	widths := make([]int, max)
 	for _, r := range rows {
 		for j, cell := range r {
-			w := utf8.RuneCountInString(cell)
+			w := runewidth.StringWidth(cell)
 			if w > widths[j] {
 				widths[j] = w
 			}
@@ -311,10 +327,29 @@ func columnWidths(rows [][]string) []int {
 	return widths
 }
 
+// padRight pads s with spaces so its display width (East Asian width aware,
+// so a CJK ideograph counts as 2) reaches `width`. Critical for monospace
+// alignment when cells mix ASCII and Chinese.
 func padRight(s string, width int) string {
-	pad := width - utf8.RuneCountInString(s)
+	pad := width - runewidth.StringWidth(s)
 	if pad <= 0 {
 		return s
 	}
 	return s + strings.Repeat(" ", pad)
+}
+
+// maxLineWidth returns the widest line's display width in `s`, fenced
+// triple-backtick markers excluded so the fence itself doesn't trigger
+// the overflow fallback.
+func maxLineWidth(s string) int {
+	max := 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, "```") {
+			continue
+		}
+		if w := runewidth.StringWidth(line); w > max {
+			max = w
+		}
+	}
+	return max
 }
