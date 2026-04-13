@@ -108,7 +108,9 @@ func main() {
 			os.Exit(1)
 		}
 		platforms = append(platforms, adapter)
-		slog.Info("discord adapter registered", "channels", cfg.Discord.AllowedChannels)
+		slog.Info("discord adapter registered",
+			"channels", cfg.Discord.AllowedChannels,
+			"allowed_user_id", cfg.Discord.AllowedUserIDs)
 	}
 
 	if cfg.Telegram.Enabled {
@@ -118,7 +120,9 @@ func main() {
 			os.Exit(1)
 		}
 		platforms = append(platforms, adapter)
-		slog.Info("telegram adapter registered", "allowed_chats", cfg.Telegram.AllowedChats)
+		slog.Info("telegram adapter registered",
+			"allowed_chats", cfg.Telegram.AllowedChats,
+			"allowed_user_id", cfg.Telegram.AllowedUserIDs)
 	}
 
 	// Future: Teams adapter goes here

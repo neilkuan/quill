@@ -180,6 +180,42 @@ allowed_chats = [123, 456]
 	}
 }
 
+func TestLoadConfig_AllowedUserIDs(t *testing.T) {
+	content := `
+[discord]
+bot_token = "d-token"
+allowed_channels = ["ch1"]
+allowed_user_id = ["user1", "user2"]
+
+[telegram]
+bot_token = "tg-token"
+allowed_chats = [100]
+allowed_user_id = [111, 222]
+
+[agent]
+command = "echo"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if len(cfg.Discord.AllowedUserIDs) != 2 {
+		t.Fatalf("expected 2 discord allowed_user_id, got %d", len(cfg.Discord.AllowedUserIDs))
+	}
+	if cfg.Discord.AllowedUserIDs[0] != "user1" || cfg.Discord.AllowedUserIDs[1] != "user2" {
+		t.Fatalf("unexpected discord allowed_user_id: %v", cfg.Discord.AllowedUserIDs)
+	}
+
+	if len(cfg.Telegram.AllowedUserIDs) != 2 {
+		t.Fatalf("expected 2 telegram allowed_user_id, got %d", len(cfg.Telegram.AllowedUserIDs))
+	}
+	if cfg.Telegram.AllowedUserIDs[0] != 111 || cfg.Telegram.AllowedUserIDs[1] != 222 {
+		t.Fatalf("unexpected telegram allowed_user_id: %v", cfg.Telegram.AllowedUserIDs)
+	}
+}
+
 func TestLoadConfig_EnvVarExpansion(t *testing.T) {
 	t.Setenv("OPENAB_TEST_TOKEN", "secret-from-env")
 

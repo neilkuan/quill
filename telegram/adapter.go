@@ -25,9 +25,15 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber st
 		allowed[id] = true
 	}
 
+	allowedUsers := make(map[int64]bool, len(cfg.AllowedUserIDs))
+	for _, uid := range cfg.AllowedUserIDs {
+		allowedUsers[uid] = true
+	}
+
 	h := &Handler{
 		Pool:            pool,
 		AllowedChats:    allowed,
+		AllowedUserIDs:  allowedUsers,
 		ReactionsConfig: cfg.Reactions,
 		Transcriber:     transcriber,
 		Synthesizer:     synthesizer,

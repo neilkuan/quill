@@ -26,9 +26,15 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 		allowed[ch] = true
 	}
 
+	allowedUsers := make(map[string]bool, len(cfg.AllowedUserIDs))
+	for _, uid := range cfg.AllowedUserIDs {
+		allowedUsers[uid] = true
+	}
+
 	h := &Handler{
 		Pool:            pool,
 		AllowedChannels: allowed,
+		AllowedUserIDs:  allowedUsers,
 		ReactionsConfig: cfg.Reactions,
 		Transcriber:     transcriber,
 		Synthesizer:     synthesizer,

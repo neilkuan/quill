@@ -28,6 +28,7 @@ type Handler struct {
 	Bot             *bot.Bot
 	Pool            *acp.SessionPool
 	AllowedChats    map[int64]bool
+	AllowedUserIDs  map[int64]bool
 	ReactionsConfig config.ReactionsConfig
 	Transcriber     stt.Transcriber
 	Synthesizer     tts.Synthesizer
@@ -60,8 +61,15 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	chatID := msg.Chat.ID
 	threadID := topicThreadID(msg)
 
-	// Check allowed chats
-	if len(h.AllowedChats) > 0 && !h.AllowedChats[chatID] {
+	// AllowedUserIDs, when non-empty, overrides AllowedChats:
+	// only messages from listed users are accepted (from any chat).
+	if len(h.AllowedUserIDs) > 0 {
+		if !h.AllowedUserIDs[msg.From.ID] {
+			slog.Warn("🚨👽🚨 telegram message from unlisted user (add to allowed_user_id to enable)",
+				"user_id", msg.From.ID, "username", msg.From.Username, "chat_id", chatID)
+			return
+		}
+	} else if len(h.AllowedChats) > 0 && !h.AllowedChats[chatID] {
 		slog.Warn("🚨👽🚨 telegram message from unlisted chat (add to allowed_chats to enable)",
 			"chat_id", chatID, "chat_type", msg.Chat.Type, "chat_title", msg.Chat.Title)
 		return

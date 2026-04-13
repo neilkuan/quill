@@ -1,6 +1,9 @@
 [discord]
 bot_token = "${DISCORD_BOT_TOKEN}"
 allowed_channels = ["1234567890"]
+# allowed_user_id, when set, takes precedence over allowed_channels —
+# the bot will only respond to these Discord user IDs (in any channel).
+# allowed_user_id = ["111111111111111111"]
 
 [discord.reactions]
 enabled = true
@@ -25,6 +28,9 @@ error_hold_ms = 2500
 # [telegram]
 # bot_token = "${TELEGRAM_BOT_TOKEN}"
 # allowed_chats = [-100123456789]
+# allowed_user_id, when set, takes precedence over allowed_chats —
+# the bot will only respond to these Telegram user IDs (in any chat).
+# allowed_user_id = [123456789]
 
 # [telegram.reactions]
 # enabled = true

@@ -25,6 +25,7 @@ import (
 type Handler struct {
 	Pool            *acp.SessionPool
 	AllowedChannels map[string]bool
+	AllowedUserIDs  map[string]bool
 	ReactionsConfig config.ReactionsConfig
 	Transcriber     stt.Transcriber
 	Synthesizer     tts.Synthesizer
@@ -39,7 +40,6 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	botID := s.State.User.ID
 	channelID := m.ChannelID
-	inAllowedChannel := len(h.AllowedChannels) == 0 || h.AllowedChannels[channelID]
 
 	isMentioned := false
 	for _, u := range m.Mentions {
@@ -52,18 +52,30 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		isMentioned = strings.Contains(m.Content, fmt.Sprintf("<@%s>", botID))
 	}
 
-	inThread := false
-	if !inAllowedChannel {
-		ch, err := s.Channel(channelID)
-		if err == nil && ch.ParentID != "" {
-			if h.AllowedChannels[ch.ParentID] {
-				inThread = true
+	// AllowedUserIDs, when non-empty, overrides the channel-based gate:
+	// only messages from listed users are accepted (from any channel/thread).
+	var inAllowedChannel, inThread bool
+	if len(h.AllowedUserIDs) > 0 {
+		if !h.AllowedUserIDs[m.Author.ID] {
+			return
+		}
+		// Allowed user — accept regardless of channel.
+		inAllowedChannel = true
+	} else {
+		inAllowedChannel = len(h.AllowedChannels) == 0 || h.AllowedChannels[channelID]
+
+		if !inAllowedChannel {
+			ch, err := s.Channel(channelID)
+			if err == nil && ch.ParentID != "" {
+				if h.AllowedChannels[ch.ParentID] {
+					inThread = true
+				}
 			}
 		}
-	}
 
-	if !inAllowedChannel && !inThread {
-		return
+		if !inAllowedChannel && !inThread {
+			return
+		}
 	}
 	if !inThread && !isMentioned {
 		return
