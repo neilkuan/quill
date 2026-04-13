@@ -14,7 +14,7 @@ ARG GH_CLI_VERSION=2.74.1
 
 # Layer 1: stable system packages (rarely changes)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl unzip procps \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip procps git \
     && rm -rf /var/lib/apt/lists/*
 
 # Layer 2: kiro-cli + gh CLI (pinned versions, cacheable)
