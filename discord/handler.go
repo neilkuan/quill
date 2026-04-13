@@ -58,6 +58,31 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		isMentioned = strings.Contains(m.Content, fmt.Sprintf("<@%s>", botID)) ||
 			strings.Contains(m.Content, fmt.Sprintf("<@!%s>", botID))
 	}
+	// Role mention (<@&ROLE_ID>): Discord auto-creates a managed role with the
+	// bot's name when the bot is added; users often autocomplete @BotName and
+	// pick that role instead of the bot user. Treat as a mention when the
+	// pinged role is assigned to the bot member.
+	if !isMentioned && len(m.MentionRoles) > 0 && m.GuildID != "" {
+		botMember, err := s.State.Member(m.GuildID, botID)
+		if err != nil {
+			botMember, err = s.GuildMember(m.GuildID, botID)
+		}
+		if err == nil && botMember != nil {
+			botRoles := make(map[string]struct{}, len(botMember.Roles))
+			for _, rid := range botMember.Roles {
+				botRoles[rid] = struct{}{}
+			}
+			for _, rid := range m.MentionRoles {
+				if _, ok := botRoles[rid]; ok {
+					isMentioned = true
+					break
+				}
+			}
+		} else if err != nil {
+			slog.Debug("failed to fetch bot member for role-mention check",
+				"guild_id", m.GuildID, "error", err)
+		}
+	}
 
 	// Dump mention IDs for diagnostics when mention detection fails.
 	mentionIDs := make([]string, 0, len(m.Mentions))
@@ -73,6 +98,7 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		"bot_id", botID,
 		"mentioned", isMentioned,
 		"mention_ids", mentionIDs,
+		"mention_roles", m.MentionRoles,
 		"content_len", len(m.Content),
 		"content", m.Content,
 		"attachments", len(m.Attachments))
