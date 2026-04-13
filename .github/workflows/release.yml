@@ -21,9 +21,22 @@ jobs:
   release-pr:
     runs-on: ubuntu-latest
     steps:
+      # Mint a token from the openab-go-app GitHub App. Using an App token
+      # (instead of the default GITHUB_TOKEN) means the commits this workflow
+      # pushes and the PRs it opens WILL trigger downstream workflows (CI on
+      # the release branch, image builds, etc.) — GITHUB_TOKEN-authored events
+      # are skipped by GitHub specifically to avoid recursion.
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Check if this push is a Release PR merge (skip if so)
         id: skip
@@ -56,10 +69,10 @@ jobs:
         # the release PR was opened still lands in the release PR.
         if: steps.skip.outputs.skip != 'true' && steps.check.outputs.commits != '0'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "openab-go-app[bot]"
+          git config user.email "openab-go-app[bot]@users.noreply.github.com"
 
           ARGS=""
           if [ -n "${{ inputs.version }}" ]; then
