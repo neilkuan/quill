@@ -543,6 +543,13 @@ func (h *Handler) streamPrompt(
 
 			case acp.AcpEventToolDone:
 				reactions.SetThinking()
+				if event.Title == "" {
+					// tool_call_update may omit `title` when the agent only
+					// reports a status change. Ignore — we don't know which
+					// line to update, and matching with an empty string would
+					// hit every line via strings.Contains(s, "") == true.
+					continue
+				}
 				icon := "✅"
 				if event.Status != "completed" {
 					icon = "❌"

@@ -85,7 +85,13 @@ const (
 // for an ACP tool-call event, based on the configured display mode.
 //
 // The boolean return is false when the caller should skip rendering a tool
-// line entirely (mode = "none"). The string return is empty in that case.
+// line entirely (mode = "none", or the title is empty). The string return
+// is empty in that case.
+//
+// Empty titles always return (false) regardless of mode — otherwise a
+// "match-by-substring" update loop could match every existing tool line
+// (since strings.Contains(s, "") is always true) and silently overwrite
+// the wrong entry.
 //
 // Modes:
 //   - "full"    — return the title unchanged.
@@ -98,14 +104,15 @@ const (
 // Unrecognised modes fall back to "full" (safest — preserves existing
 // behaviour for users who typo the config).
 func FormatToolTitle(title, mode string) (string, bool) {
-	switch mode {
-	case ToolDisplayNone:
+	if mode == ToolDisplayNone {
 		return "", false
+	}
+	if strings.TrimSpace(title) == "" {
+		return "", false
+	}
+	switch mode {
 	case ToolDisplayCompact:
 		trimmed := strings.TrimSpace(title)
-		if trimmed == "" {
-			return "", true
-		}
 		first := trimmed
 		if idx := strings.IndexAny(trimmed, " \t\n"); idx > 0 {
 			first = trimmed[:idx]

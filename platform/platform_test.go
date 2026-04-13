@@ -195,7 +195,9 @@ func TestFormatToolTitle(t *testing.T) {
 		{"compact strips colon suffix", "Read:", "compact", "Read", true},
 		{"compact handles tab separator", "Edit\t/etc/passwd", "compact", "Edit", true},
 		{"compact trims surrounding whitespace", "  Bash  ", "compact", "Bash", true},
-		{"compact empty title stays empty but ok", "", "compact", "", true},
+		{"compact empty title skipped", "", "compact", "", false},
+		{"compact whitespace-only title skipped", "  \t\n", "compact", "", false},
+		{"full empty title skipped", "", "full", "", false},
 		{"compact punctuation-only token falls back to trimmed", ": arg", "compact", ": arg", true},
 
 		// none mode
