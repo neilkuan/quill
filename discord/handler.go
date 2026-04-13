@@ -336,7 +336,7 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	)
 	reactions.SetQueued()
 
-	finalText, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode)
+	finalText, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
 
 	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
@@ -509,6 +509,7 @@ func streamPrompt(
 	msgID string,
 	reactions *StatusReactionController,
 	tableMode markdown.TableMode,
+	toolDisplay string,
 ) (string, error) {
 	var finalText string
 	err := pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
@@ -592,11 +593,13 @@ func streamPrompt(
 			case acp.AcpEventToolStart:
 				if event.Title != "" {
 					reactions.SetTool(event.Title)
-					toolLines = append(toolLines, fmt.Sprintf("🔧 `%s`...", event.Title))
-					display := composeDisplay(toolLines, textBuf.String())
-					displayMu.Lock()
-					currentDisplay = display
-					displayMu.Unlock()
+					if label, ok := platform.FormatToolTitle(event.Title, toolDisplay); ok {
+						toolLines = append(toolLines, fmt.Sprintf("🔧 `%s`...", label))
+						display := composeDisplay(toolLines, textBuf.String())
+						displayMu.Lock()
+						currentDisplay = display
+						displayMu.Unlock()
+					}
 				}
 
 			case acp.AcpEventToolDone:
@@ -605,17 +608,19 @@ func streamPrompt(
 				if event.Status != "completed" {
 					icon = "❌"
 				}
-				// Update the matching tool line
-				for i := len(toolLines) - 1; i >= 0; i-- {
-					if strings.Contains(toolLines[i], event.Title) {
-						toolLines[i] = fmt.Sprintf("%s `%s`", icon, event.Title)
-						break
+				if label, ok := platform.FormatToolTitle(event.Title, toolDisplay); ok {
+					// Update the matching tool line
+					for i := len(toolLines) - 1; i >= 0; i-- {
+						if strings.Contains(toolLines[i], label) {
+							toolLines[i] = fmt.Sprintf("%s `%s`", icon, label)
+							break
+						}
 					}
+					display := composeDisplay(toolLines, textBuf.String())
+					displayMu.Lock()
+					currentDisplay = display
+					displayMu.Unlock()
 				}
-				display := composeDisplay(toolLines, textBuf.String())
-				displayMu.Lock()
-				currentDisplay = display
-				displayMu.Unlock()
 			}
 		}
 

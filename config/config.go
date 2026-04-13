@@ -64,8 +64,14 @@ type DiscordConfig struct {
 type ReactionsConfig struct {
 	Enabled          bool           `toml:"enabled"`
 	RemoveAfterReply bool           `toml:"remove_after_reply"`
-	Emojis           ReactionEmojis `toml:"emojis"`
-	Timing           ReactionTiming `toml:"timing"`
+	// ToolDisplay controls how ACP tool-call titles are rendered in the
+	// streamed chat message. One of:
+	//   "full"    — original title (e.g. `Running: curl -s "https://..."`)
+	//   "compact" — first whitespace-delimited token only (default)
+	//   "none"    — hide tool lines entirely
+	ToolDisplay string         `toml:"tool_display"`
+	Emojis      ReactionEmojis `toml:"emojis"`
+	Timing      ReactionTiming `toml:"timing"`
 }
 
 type ReactionEmojis struct {
@@ -228,6 +234,10 @@ func applyReactionDefaults(r *ReactionsConfig) {
 		r.Enabled = true
 	}
 
+	if r.ToolDisplay == "" {
+		r.ToolDisplay = "compact"
+	}
+
 	e := &r.Emojis
 	if e.Queued == "" {
 		e.Queued = "👀"
@@ -274,6 +284,10 @@ func applyReactionDefaults(r *ReactionsConfig) {
 func applyTelegramReactionDefaults(r *ReactionsConfig) {
 	if !r.Enabled && r.Emojis.Queued == "" {
 		r.Enabled = true
+	}
+
+	if r.ToolDisplay == "" {
+		r.ToolDisplay = "compact"
 	}
 
 	e := &r.Emojis

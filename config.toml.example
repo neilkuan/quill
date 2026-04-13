@@ -10,6 +10,12 @@ allowed_channels = ["1234567890"]
 [discord.reactions]
 enabled = true
 remove_after_reply = false
+# tool_display controls how ACP tool-call lines are rendered in the streaming
+# message. One of: "full" (original title), "compact" (first token — default),
+# or "none" (hide tool lines entirely). Use "compact" or "none" when agents
+# put full shell commands in tool titles (e.g. codex), to avoid long noisy
+# lines and accidental exposure of URLs/paths/args in public channels.
+# tool_display = "compact"
 
 [discord.reactions.emojis]
 queued = "👀"
@@ -40,6 +46,7 @@ error_hold_ms = 2500
 # [telegram.reactions]
 # enabled = true
 # remove_after_reply = false
+# tool_display = "compact"   # full | compact | none — see [discord.reactions] above
 
 # [telegram.reactions.emojis]
 # queued = "👌"
