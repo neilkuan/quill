@@ -74,6 +74,52 @@ func SplitMessage(text string, limit int) []string {
 	return chunks
 }
 
+// Tool display modes for ReactionsConfig.ToolDisplay.
+const (
+	ToolDisplayFull    = "full"
+	ToolDisplayCompact = "compact"
+	ToolDisplayNone    = "none"
+)
+
+// FormatToolTitle returns the title to render in the streamed chat message
+// for an ACP tool-call event, based on the configured display mode.
+//
+// The boolean return is false when the caller should skip rendering a tool
+// line entirely (mode = "none"). The string return is empty in that case.
+//
+// Modes:
+//   - "full"    — return the title unchanged.
+//   - "compact" — return the first whitespace-delimited token, with trailing
+//     punctuation (":") stripped. Keeps callers informed that a tool is
+//     running without leaking long/sensitive argument lists. Falls back to
+//     the full title when it has no whitespace.
+//   - "none"    — skip the tool line.
+//
+// Unrecognised modes fall back to "full" (safest — preserves existing
+// behaviour for users who typo the config).
+func FormatToolTitle(title, mode string) (string, bool) {
+	switch mode {
+	case ToolDisplayNone:
+		return "", false
+	case ToolDisplayCompact:
+		trimmed := strings.TrimSpace(title)
+		if trimmed == "" {
+			return "", true
+		}
+		first := trimmed
+		if idx := strings.IndexAny(trimmed, " \t\n"); idx > 0 {
+			first = trimmed[:idx]
+		}
+		first = strings.TrimRight(first, ":,;")
+		if first == "" {
+			return trimmed, true
+		}
+		return first, true
+	default: // "full" or empty/unknown
+		return title, true
+	}
+}
+
 // TruncateUTF8 truncates text to at most limit bytes without cutting multi-byte characters.
 // If truncated, appends the suffix (e.g. "…").
 func TruncateUTF8(text string, limit int, suffix string) string {

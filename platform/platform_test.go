@@ -175,6 +175,44 @@ func TestFormatFileBlock_MultipleFiles(t *testing.T) {
 	}
 }
 
+func TestFormatToolTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    string
+		mode     string
+		want     string
+		wantOk   bool
+	}{
+		// full mode
+		{"full passes through", `Running: curl -s "https://example.com"`, "full", `Running: curl -s "https://example.com"`, true},
+		{"full with short title", "Bash", "full", "Bash", true},
+		{"empty mode falls back to full", "Bash", "", "Bash", true},
+		{"unknown mode falls back to full", `Running: curl`, "verbose", `Running: curl`, true},
+
+		// compact mode
+		{"compact single token unchanged", "Bash", "compact", "Bash", true},
+		{"compact strips args after space", `Running: curl -s "https://..."`, "compact", "Running", true},
+		{"compact strips colon suffix", "Read:", "compact", "Read", true},
+		{"compact handles tab separator", "Edit\t/etc/passwd", "compact", "Edit", true},
+		{"compact trims surrounding whitespace", "  Bash  ", "compact", "Bash", true},
+		{"compact empty title stays empty but ok", "", "compact", "", true},
+		{"compact punctuation-only token falls back to trimmed", ": arg", "compact", ": arg", true},
+
+		// none mode
+		{"none skips rendering", "Bash", "none", "", false},
+		{"none skips even with long title", `Running: curl -s ...`, "none", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := FormatToolTitle(tt.title, tt.mode)
+			if got != tt.want || ok != tt.wantOk {
+				t.Errorf("FormatToolTitle(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.title, tt.mode, got, ok, tt.want, tt.wantOk)
+			}
+		})
+	}
+}
+
 func TestTruncateUTF8_CJK(t *testing.T) {
 	text := "你好世界這是測試"
 	result := TruncateUTF8(text, 10, "…")

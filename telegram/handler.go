@@ -532,11 +532,13 @@ func (h *Handler) streamPrompt(
 			case acp.AcpEventToolStart:
 				if event.Title != "" {
 					reactions.SetTool(event.Title)
-					toolLines = append(toolLines, fmt.Sprintf("🔧 `%s`...", event.Title))
-					display := composeDisplay(toolLines, textBuf.String())
-					displayMu.Lock()
-					currentDisplay = display
-					displayMu.Unlock()
+					if label, ok := platform.FormatToolTitle(event.Title, h.ReactionsConfig.ToolDisplay); ok {
+						toolLines = append(toolLines, fmt.Sprintf("🔧 `%s`...", label))
+						display := composeDisplay(toolLines, textBuf.String())
+						displayMu.Lock()
+						currentDisplay = display
+						displayMu.Unlock()
+					}
 				}
 
 			case acp.AcpEventToolDone:
@@ -545,16 +547,18 @@ func (h *Handler) streamPrompt(
 				if event.Status != "completed" {
 					icon = "❌"
 				}
-				for i := len(toolLines) - 1; i >= 0; i-- {
-					if strings.Contains(toolLines[i], event.Title) {
-						toolLines[i] = fmt.Sprintf("%s `%s`", icon, event.Title)
-						break
+				if label, ok := platform.FormatToolTitle(event.Title, h.ReactionsConfig.ToolDisplay); ok {
+					for i := len(toolLines) - 1; i >= 0; i-- {
+						if strings.Contains(toolLines[i], label) {
+							toolLines[i] = fmt.Sprintf("%s `%s`", icon, label)
+							break
+						}
 					}
+					display := composeDisplay(toolLines, textBuf.String())
+					displayMu.Lock()
+					currentDisplay = display
+					displayMu.Unlock()
 				}
-				display := composeDisplay(toolLines, textBuf.String())
-				displayMu.Lock()
-				currentDisplay = display
-				displayMu.Unlock()
 			}
 		}
 
