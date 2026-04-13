@@ -113,6 +113,23 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		hasVoiceOrAudio := msg.Voice != nil || msg.Audio != nil
 
 		if !mentioned && !repliedToBot && !hasVoiceOrAudio {
+			// Dump entities so mention-detection failures are diagnosable
+			// (e.g. a @mention that came through as a different entity type,
+			// or a text mention keyed by user_id rather than @username).
+			entityTypes := make([]string, 0, len(msg.Entities))
+			for _, e := range msg.Entities {
+				entityTypes = append(entityTypes, string(e.Type))
+			}
+			slog.Debug("telegram group message not addressed to bot, ignoring",
+				"chat_id", chatID,
+				"user_id", msg.From.ID,
+				"bot_username", botUsername,
+				"mentioned", mentioned,
+				"replied_to_bot", repliedToBot,
+				"has_voice_or_audio", hasVoiceOrAudio,
+				"text", msg.Text,
+				"entity_types", entityTypes,
+				"entity_count", len(msg.Entities))
 			return
 		}
 	}
