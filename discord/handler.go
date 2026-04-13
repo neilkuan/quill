@@ -25,6 +25,10 @@ import (
 type Handler struct {
 	Pool            *acp.SessionPool
 	AllowedChannels map[string]bool
+	AllowedUserIDs  map[string]bool
+	// AllowAnyUser is true when allowed_user_id contains "*" — anyone can talk
+	// to the bot from any channel.
+	AllowAnyUser    bool
 	ReactionsConfig config.ReactionsConfig
 	Transcriber     stt.Transcriber
 	Synthesizer     tts.Synthesizer
@@ -39,7 +43,6 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	botID := s.State.User.ID
 	channelID := m.ChannelID
-	inAllowedChannel := len(h.AllowedChannels) == 0 || h.AllowedChannels[channelID]
 
 	isMentioned := false
 	for _, u := range m.Mentions {
@@ -49,21 +52,91 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 	if !isMentioned {
-		isMentioned = strings.Contains(m.Content, fmt.Sprintf("<@%s>", botID))
+		// Discord clients may emit either <@BOTID> or the legacy nickname
+		// form <@!BOTID>. discordgo normally populates m.Mentions, but fall
+		// back to raw content scanning if it doesn't (seen in some clients).
+		isMentioned = strings.Contains(m.Content, fmt.Sprintf("<@%s>", botID)) ||
+			strings.Contains(m.Content, fmt.Sprintf("<@!%s>", botID))
 	}
-
-	inThread := false
-	if !inAllowedChannel {
-		ch, err := s.Channel(channelID)
-		if err == nil && ch.ParentID != "" {
-			if h.AllowedChannels[ch.ParentID] {
-				inThread = true
+	// Role mention (<@&ROLE_ID>): Discord auto-creates a managed role with the
+	// bot's name when the bot is added; users often autocomplete @BotName and
+	// pick that role instead of the bot user. Treat as a mention when the
+	// pinged role is assigned to the bot member.
+	if !isMentioned && len(m.MentionRoles) > 0 && m.GuildID != "" {
+		botMember, err := s.State.Member(m.GuildID, botID)
+		if err != nil {
+			botMember, err = s.GuildMember(m.GuildID, botID)
+		}
+		if err == nil && botMember != nil {
+			botRoles := make(map[string]struct{}, len(botMember.Roles))
+			for _, rid := range botMember.Roles {
+				botRoles[rid] = struct{}{}
 			}
+			for _, rid := range m.MentionRoles {
+				if _, ok := botRoles[rid]; ok {
+					isMentioned = true
+					break
+				}
+			}
+		} else if err != nil {
+			slog.Debug("failed to fetch bot member for role-mention check",
+				"guild_id", m.GuildID, "error", err)
 		}
 	}
 
-	if !inAllowedChannel && !inThread {
-		return
+	// Dump mention IDs for diagnostics when mention detection fails.
+	mentionIDs := make([]string, 0, len(m.Mentions))
+	for _, u := range m.Mentions {
+		mentionIDs = append(mentionIDs, u.ID)
+	}
+
+	slog.Debug("discord message received",
+		"author_id", m.Author.ID,
+		"author", m.Author.Username,
+		"channel_id", channelID,
+		"guild_id", m.GuildID,
+		"bot_id", botID,
+		"mentioned", isMentioned,
+		"mention_ids", mentionIDs,
+		"mention_roles", m.MentionRoles,
+		"content_len", len(m.Content),
+		"content", m.Content,
+		"attachments", len(m.Attachments))
+
+	// AllowedUserIDs (or AllowAnyUser for "*"), when set, overrides the
+	// channel-based gate: listed users (or any user for "*") are accepted
+	// from any channel/thread.
+	var inAllowedChannel, inThread bool
+	userGateActive := h.AllowAnyUser || len(h.AllowedUserIDs) > 0
+	if userGateActive {
+		if !h.AllowAnyUser && !h.AllowedUserIDs[m.Author.ID] {
+			// Only log when the user actually tried to address the bot,
+			// otherwise background messages in busy guilds would flood logs.
+			if isMentioned {
+				slog.Warn("🚨👽🚨 discord message from unlisted user (add to allowed_user_id to enable)",
+					"user_id", m.Author.ID,
+					"username", m.Author.Username,
+					"channel_id", m.ChannelID)
+			}
+			return
+		}
+		// Allowed user — accept regardless of channel.
+		inAllowedChannel = true
+	} else {
+		inAllowedChannel = len(h.AllowedChannels) == 0 || h.AllowedChannels[channelID]
+
+		if !inAllowedChannel {
+			ch, err := s.Channel(channelID)
+			if err == nil && ch.ParentID != "" {
+				if h.AllowedChannels[ch.ParentID] {
+					inThread = true
+				}
+			}
+		}
+
+		if !inAllowedChannel && !inThread {
+			return
+		}
 	}
 	if !inThread && !isMentioned {
 		return
@@ -302,8 +375,28 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 }
 
 func (h *Handler) OnReady(s *discordgo.Session, r *discordgo.Ready) {
-	slog.Info("discord bot connected", "user", r.User.Username)
+	slog.Info("✅ discord bot connected",
+		"user", r.User.Username,
+		"user_id", r.User.ID,
+		"session_id", r.SessionID,
+		"guilds", len(r.Guilds),
+		"api_version", r.Version)
+	// Log each guild we're in at debug level — handy for confirming the bot
+	// actually has access to the expected servers / channels.
+	for _, g := range r.Guilds {
+		slog.Debug("discord guild available", "guild_id", g.ID, "unavailable", g.Unavailable)
+	}
 	h.registerSlashCommands(s, r.User.ID)
+}
+
+// OnDisconnect fires when the Discord gateway websocket drops.
+func (h *Handler) OnDisconnect(s *discordgo.Session, d *discordgo.Disconnect) {
+	slog.Warn("⚠️  discord gateway disconnected")
+}
+
+// OnResumed fires when the gateway session resumes after a disconnect.
+func (h *Handler) OnResumed(s *discordgo.Session, r *discordgo.Resumed) {
+	slog.Info("🔄 discord gateway resumed")
 }
 
 // slashCommands defines the Discord Application Commands to register.

@@ -26,9 +26,21 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 		allowed[ch] = true
 	}
 
+	allowedUsers := make(map[string]bool, len(cfg.AllowedUserIDs))
+	allowAnyUser := false
+	for _, uid := range cfg.AllowedUserIDs {
+		if uid == "*" {
+			allowAnyUser = true
+			continue
+		}
+		allowedUsers[uid] = true
+	}
+
 	h := &Handler{
 		Pool:            pool,
 		AllowedChannels: allowed,
+		AllowedUserIDs:  allowedUsers,
+		AllowAnyUser:    allowAnyUser,
 		ReactionsConfig: cfg.Reactions,
 		Transcriber:     transcriber,
 		Synthesizer:     synthesizer,
@@ -42,6 +54,8 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 
 	dg.AddHandler(h.OnMessageCreate)
 	dg.AddHandler(h.OnReady)
+	dg.AddHandler(h.OnResumed)
+	dg.AddHandler(h.OnDisconnect)
 	dg.AddHandler(h.OnInteractionCreate)
 
 	return &Adapter{session: dg}, nil

@@ -69,10 +69,14 @@ Configuration uses TOML with environment variable expansion (`${VAR_NAME}` synta
 [discord]
 bot_token = "${DISCORD_BOT_TOKEN}"
 allowed_channels = ["1234567890"]
+# allowed_user_id = ["*"]                    # wildcard: any user
+# allowed_user_id = ["823367235137044491"]   # or specific Discord user IDs
 
 [telegram]
 bot_token = "${TELEGRAM_BOT_TOKEN}"
 allowed_chats = [-100123456789]
+# allowed_user_id = ["*"]             # wildcard: any user
+# allowed_user_id = ["123456789"]     # or specific Telegram user IDs (as strings)
 
 [agent]
 command = "kiro-cli"
@@ -87,6 +91,24 @@ session_ttl_hours = 24
 enabled = true
 remove_after_reply = false
 ```
+
+##### User allowlist (`allowed_user_id`)
+
+`allowed_user_id`, when set on a platform section, **takes precedence** over `allowed_channels` (Discord) / `allowed_chats` (Telegram): only the listed users can trigger the bot, from **any** channel or chat. When unset, the existing channel/chat gate is used unchanged. `["*"]` is a wildcard that allows any user.
+
+Matching is against the numeric user ID, not the username — usernames can change, IDs can't.
+
+###### How to find a user's Discord ID
+
+- **From the app:** Enable Developer Mode (`User Settings → Advanced → Developer Mode`), then right-click a user → **Copy User ID**.
+- **From logs:** Run with `OPENAB_GO_LOG=debug`, send the bot a message, and look for the `author_id=...` field in the `discord message received` log line.
+
+###### How to find a user's Telegram ID
+
+- **From Telegram:** message [@userinfobot](https://t.me/userinfobot), it replies with your numeric ID.
+- **From logs:** run with `OPENAB_GO_LOG=debug`, send the bot a message, and look for `user_id=...` in the `telegram update` log line.
+
+Telegram IDs go in quotes in TOML (`["123456789"]`, not `[123456789]`) so `"*"` can coexist with numeric IDs in the same array.
 
 ##### STT — Speech-to-Text (Optional)
 

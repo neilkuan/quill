@@ -2,7 +2,9 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -25,9 +27,25 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber st
 		allowed[id] = true
 	}
 
+	allowedUsers := make(map[int64]bool, len(cfg.AllowedUserIDs))
+	allowAnyUser := false
+	for _, raw := range cfg.AllowedUserIDs {
+		if raw == "*" {
+			allowAnyUser = true
+			continue
+		}
+		uid, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("telegram.allowed_user_id: invalid entry %q (expected integer ID or \"*\"): %w", raw, err)
+		}
+		allowedUsers[uid] = true
+	}
+
 	h := &Handler{
 		Pool:            pool,
 		AllowedChats:    allowed,
+		AllowedUserIDs:  allowedUsers,
+		AllowAnyUser:    allowAnyUser,
 		ReactionsConfig: cfg.Reactions,
 		Transcriber:     transcriber,
 		Synthesizer:     synthesizer,
