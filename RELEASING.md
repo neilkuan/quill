@@ -101,3 +101,66 @@ Tag patterns:
 | `tag-on-merge.yml` | Release PR merged | Create stable git tag |
 | `build.yml` | Any `v*` tag pushed | Build (RC) or promote (stable) Docker images |
 | `test.yml` | PR / push to main | Go build, vet, test |
+
+## Adding a new agent variant (e.g. copilot, qwen, …)
+
+For every new agent CLI we support, a new image `ghcr.io/neilkuan/openab-go-<name>` has to be published. The flow below is mandatory — skipping the bootstrap step will make the first RC build fail with `denied: permission_denied: write_package`, which then cancels the whole matrix because `build.yml` uses registry cache (`cache-to: type=registry,ref=…:cache-<runner>`) that tries to write before the push is even attempted.
+
+### 1. Code / config changes
+
+1. Add `Dockerfile.<name>` — copy from `Dockerfile.claude` and keep the same 3-layer structure (system packages → pinned `gh` CLI → npm/apt agent packages) so registry cache reuse behaves the same way.
+2. Add the variant to **all three matrix blocks** in `.github/workflows/build.yml`:
+   - `build-image` — `{ suffix: "-<name>", dockerfile: "Dockerfile.<name>", artifact: "<name>" }`
+   - `merge-manifests` — `{ suffix: "-<name>", artifact: "<name>" }`
+   - `promote-stable` — `{ suffix: "-<name>" }`
+3. Update image tables in `README.md`, `README-zh-tw.md`, `RELEASING.md`, and `CLAUDE.md`.
+4. Add an `[agent]` example to `config.toml.example`.
+
+### 2. Bootstrap the GHCR package (one-time, MUST happen before the first RC build)
+
+User-owned GHCR packages (`/users/neilkuan/...`) must exist before the repo's `GITHUB_TOKEN` can push to them — they are **not auto-created on first push from Actions**. Seed the package by re-tagging any existing variant's multi-arch manifest:
+
+```bash
+# 1. Login to ghcr.io with a PAT that has write:packages
+gh auth token | docker login ghcr.io -u neilkuan --password-stdin
+
+# 2. Copy an existing multi-arch manifest to the new package name
+#    (imagetools create preserves the manifest list — no need to pull/tag/push per arch)
+docker buildx imagetools create \
+  -t ghcr.io/neilkuan/openab-go-<name>:bootstrap \
+  ghcr.io/neilkuan/openab-go-claude:<latest-stable>
+
+# 3. Verify the package exists, is public, and linked to this repo
+gh api /user/packages/container/openab-go-<name> \
+  | jq '{name, visibility, repository: .repository.full_name}'
+# expected: visibility=public, repository=neilkuan/openab-go
+```
+
+The `visibility` and `repository` fields are inherited from the source image's OCI labels (specifically `org.opencontainers.image.source`), so copying any of the existing public openab-go-* images sets them correctly. Bootstrap image content is irrelevant — it's overwritten by the first successful RC build.
+
+### 3. Push the RC tag
+
+From the matching `release/vX.Y.Z` branch:
+
+```bash
+git checkout release/vX.Y.Z
+./scripts/release.sh --rc
+```
+
+All 5 variants × 2 platforms should build and push. If the new variant still fails with `write_package denied`, the repo needs to be given **Actions write access** to the new package:
+
+- Open `https://github.com/users/neilkuan/packages/container/openab-go-<name>/settings`
+- **Manage Actions access** → **Add repository** → `neilkuan/openab-go` → role `Write`
+
+This setting is **not exposed by any REST/GraphQL API** — it must be done via the web UI exactly once per new package.
+
+### 4. Clean up the bootstrap tag (optional)
+
+The `:bootstrap` tag is only useful for the first push. Once the RC has produced `:<rc>` tags, delete the bootstrap version so it doesn't confuse future readers:
+
+```bash
+gh api -X DELETE \
+  /user/packages/container/openab-go-<name>/versions/<version-id-of-bootstrap>
+```
+
+(Look up the version id via `gh api /user/packages/container/openab-go-<name>/versions | jq '.[] | select(.metadata.container.tags[] == "bootstrap")'`.)
