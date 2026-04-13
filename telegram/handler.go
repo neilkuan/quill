@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -335,8 +334,8 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	sent, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:          chatID,
 		MessageThreadID: threadID,
-		Text:            "💭 _thinking..._",
-		ParseMode:       models.ParseModeMarkdownV1,
+		Text:            "💭 <i>thinking…</i>",
+		ParseMode:       models.ParseModeHTML,
 		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 	})
 	if err != nil {
@@ -417,17 +416,18 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 
 	chunks := platform.SplitMessage(response, 4096)
 	for _, chunk := range chunks {
-		converted := convertToTelegramMarkdown(chunk)
+		converted := convertToTelegramHTML(chunk)
 		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:          chatID,
 			MessageThreadID: threadID,
 			Text:            converted,
-			ParseMode:       models.ParseModeMarkdownV1,
+			ParseMode:       models.ParseModeHTML,
 			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 		})
 		if err != nil {
-			// Fallback to plain text if markdown fails
-			slog.Debug("telegram markdown send failed, retrying plain", "error", err)
+			// Fallback to plain text if HTML parse fails (e.g. unbalanced
+			// tag escaped from agent output).
+			slog.Debug("telegram html send failed, retrying plain", "error", err)
 			b.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID:          chatID,
 				MessageThreadID: threadID,
@@ -583,16 +583,16 @@ func (h *Handler) streamPrompt(
 
 		chunks := platform.SplitMessage(finalContent, 4096)
 		for i, chunk := range chunks {
-			converted := convertToTelegramMarkdown(chunk)
+			converted := convertToTelegramHTML(chunk)
 			if i == 0 {
 				_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
 					ChatID:    chatID,
 					MessageID: msgID,
 					Text:      converted,
-					ParseMode: models.ParseModeMarkdownV1,
+					ParseMode: models.ParseModeHTML,
 				})
 				if err != nil {
-					slog.Debug("telegram markdown edit failed, retrying plain", "error", err)
+					slog.Debug("telegram html edit failed, retrying plain", "error", err)
 					b.EditMessageText(ctx, &bot.EditMessageTextParams{
 						ChatID:    chatID,
 						MessageID: msgID,
@@ -604,10 +604,10 @@ func (h *Handler) streamPrompt(
 					ChatID:          chatID,
 					MessageThreadID: threadID,
 					Text:            converted,
-					ParseMode:       models.ParseModeMarkdownV1,
+					ParseMode:       models.ParseModeHTML,
 				})
 				if err != nil {
-					slog.Debug("telegram markdown send failed, retrying plain", "error", err)
+					slog.Debug("telegram html send failed, retrying plain", "error", err)
 					b.SendMessage(ctx, &bot.SendMessageParams{
 						ChatID:          chatID,
 						MessageThreadID: threadID,
@@ -758,14 +758,6 @@ func (h *Handler) buildVoiceInfo(userID string) *command.VoiceInfo {
 }
 
 // --- Helper functions ---
-
-// convertToTelegramMarkdown converts GFM-style markdown to Telegram Markdown v1.
-// Main conversion: **bold** → *bold* (Telegram uses single asterisk for bold).
-var gfmBoldRe = regexp.MustCompile(`\*\*(.+?)\*\*`)
-
-func convertToTelegramMarkdown(text string) string {
-	return gfmBoldRe.ReplaceAllString(text, "*$1*")
-}
 
 // isForumTopic returns true when this message is in a forum topic thread.
 func isForumTopic(msg *models.Message) bool {
