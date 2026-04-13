@@ -75,12 +75,6 @@ working_dir = "/home/agent"
 # env = { OPENAI_API_KEY = "${OPENAI_API_KEY}" }
 
 # [agent]
-# command = "gemini"
-# args = ["--acp"]
-# working_dir = "/home/node"
-# env = { GEMINI_API_KEY = "${GEMINI_API_KEY}" }
-
-# [agent]
 # command = "copilot"
 # args = ["--acp", "--stdio"]
 # working_dir = "/home/node"

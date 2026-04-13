@@ -2,7 +2,7 @@
 
 [繁體中文](README-zh-tw.md) | English
 
-A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord** and **Telegram** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [GitHub Copilot CLI](https://github.com/github/copilot-cli), and more.
+A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord** and **Telegram** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot CLI](https://github.com/github/copilot-cli), and more.
 
 This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (originally in Rust).
 
@@ -10,7 +10,7 @@ This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (origi
 
 ##### Features
 
-- **Pluggable agent backends** — Kiro, Claude Code, Codex, Gemini, GitHub Copilot (any ACP-compatible CLI)
+- **Pluggable agent backends** — Kiro, Claude Code, Codex, GitHub Copilot (any ACP-compatible CLI)
 - **Discord integration** — @mention triggers, auto thread creation, multi-turn conversations
 - **Telegram integration** — @mention / reply-to-bot in groups, private chat, voice auto-accepted in groups, forum topic support (one session per topic)
 - **Voice message transcription** — transcribes voice messages via OpenAI Whisper API (Discord & Telegram)
@@ -25,14 +25,13 @@ This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (origi
 
 ##### Pluggable Agent Backends
 
-Supports Kiro CLI, Claude Code, Codex, Gemini, GitHub Copilot CLI, and any ACP-compatible CLI.
+Supports Kiro CLI, Claude Code, Codex, GitHub Copilot CLI, and any ACP-compatible CLI.
 
 | Agent key | CLI | ACP Adapter | Auth |
 |---|---|---|---|
 | `kiro` (default) | Kiro CLI | Native `kiro-cli acp` | `kiro-cli login --use-device-flow` |
 | `codex` | Codex | [@zed-industries/codex-acp](https://github.com/zed-industries/codex-acp) | `codex login --device-auth` |
 | `claude` | Claude Code | [@agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | `claude auth login` or `claude setup-token` |
-| `gemini` | Gemini CLI | Native `gemini --acp` | Google OAuth or `GEMINI_API_KEY` |
 | `copilot` ⚠️ | GitHub Copilot CLI | Native `copilot --acp --stdio` | `gh auth login -p https -w` (requires paid Copilot subscription; ACP support in public preview) |
 
 ---
@@ -153,7 +152,7 @@ When configured, the bot sends a voice message alongside text replies when the u
 
 A typical chatbot voice reply (~300 chars) costs about **$0.0045** with `tts-1`. Pricing as of 2026, see [OpenAI pricing](https://openai.com/api/pricing/) for latest.
 
-See [`config.toml.example`](config.toml.example) for the full reference including alternative agents (Claude, Codex, Gemini).
+See [`config.toml.example`](config.toml.example) for the full reference including alternative agents (Claude, Codex).
 
 ---
 
@@ -223,14 +222,13 @@ listen = ":8080"
 
 ##### Docker
 
-Five image variants are published for each release:
+Four image variants are published for each release:
 
 | Image | Agent |
 |---|---|
 | `ghcr.io/neilkuan/openab-go` | Kiro CLI |
 | `ghcr.io/neilkuan/openab-go-claude` | Claude Code |
 | `ghcr.io/neilkuan/openab-go-codex` | Codex |
-| `ghcr.io/neilkuan/openab-go-gemini` | Gemini CLI |
 | `ghcr.io/neilkuan/openab-go-copilot` | GitHub Copilot CLI |
 
 ```bash
@@ -246,7 +244,7 @@ docker run -v $(pwd)/config.toml:/etc/openab-go/config.toml \
 
 - Go 1.23+
 - A Discord bot token with `MESSAGE_CONTENT` intent enabled, and/or a Telegram bot token
-- An ACP-compatible CLI installed (e.g., `kiro-cli`, `claude`, `codex`, `gemini`)
+- An ACP-compatible CLI installed (e.g., `kiro-cli`, `claude`, `codex`)
 
 ###### Build
 
@@ -297,7 +295,6 @@ openab-go/
 ├── Dockerfile           # Kiro CLI variant
 ├── Dockerfile.claude    # Claude Code variant
 ├── Dockerfile.codex     # Codex variant
-├── Dockerfile.gemini    # Gemini CLI variant
 ├── Dockerfile.copilot   # GitHub Copilot CLI variant
 ├── config.toml.example  # Configuration reference
 ├── VERSION              # Semver version

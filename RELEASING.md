@@ -79,13 +79,12 @@ Version bump is auto-detected from conventional commits:
 
 ## Image Tags
 
-Each build produces five multi-arch image variants:
+Each build produces four multi-arch image variants:
 
 ```
 ghcr.io/neilkuan/openab-go:<tag>          # kiro-cli
 ghcr.io/neilkuan/openab-go-codex:<tag>    # codex
 ghcr.io/neilkuan/openab-go-claude:<tag>   # claude
-ghcr.io/neilkuan/openab-go-gemini:<tag>   # gemini
 ghcr.io/neilkuan/openab-go-copilot:<tag>  # GitHub Copilot CLI
 ```
 
@@ -147,7 +146,7 @@ git checkout release/vX.Y.Z
 ./scripts/release.sh --rc
 ```
 
-All 5 variants × 2 platforms should build and push. If the new variant still fails with `write_package denied`, the repo needs to be given **Actions write access** to the new package:
+All 4 variants × 2 platforms should build and push. If the new variant still fails with `write_package denied`, the repo needs to be given **Actions write access** to the new package:
 
 - Open `https://github.com/users/neilkuan/packages/container/openab-go-<name>/settings`
 - **Manage Actions access** → **Add repository** → `neilkuan/openab-go` → role `Write`

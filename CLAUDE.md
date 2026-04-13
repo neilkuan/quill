@@ -29,14 +29,13 @@ CI runs `go build ./...`, `go vet ./...`, and `go test ./... -v` on every PR and
 
 ## Docker
 
-Five Dockerfile variants exist for different agent backends:
+Four Dockerfile variants exist for different agent backends:
 
 | Dockerfile | Agent binary | Base image |
 |---|---|---|
 | `Dockerfile` | `kiro-cli` | `debian:bookworm-slim` |
 | `Dockerfile.claude` | `claude-agent-acp` | `node:22-bookworm-slim` |
 | `Dockerfile.codex` | `codex-acp` | `node:22-bookworm-slim` |
-| `Dockerfile.gemini` | `gemini` | `node:22-bookworm-slim` |
 | `Dockerfile.copilot` | `copilot` (native ACP) | `node:22-bookworm-slim` |
 
 All use multi-stage builds (Go builder → runtime) and accept a `COMMIT` build arg.

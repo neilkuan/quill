@@ -2,7 +2,7 @@
 
 繁體中文 | [English](README.md)
 
-一個輕量、安全、雲原生的 **ACP（Agent Client Protocol）橋接器**，連接 **Discord** 和 **Telegram** 與任何 ACP 相容的 coding CLI — [Kiro CLI](https://kiro.dev)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex](https://github.com/openai/codex)、[Gemini CLI](https://github.com/google-gemini/gemini-cli)、[GitHub Copilot CLI](https://github.com/github/copilot-cli) 等。
+一個輕量、安全、雲原生的 **ACP（Agent Client Protocol）橋接器**，連接 **Discord** 和 **Telegram** 與任何 ACP 相容的 coding CLI — [Kiro CLI](https://kiro.dev)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex](https://github.com/openai/codex)、[GitHub Copilot CLI](https://github.com/github/copilot-cli) 等。
 
 這是 [openab](https://github.com/openabdev/openab)（原本以 Rust 撰寫）的 **Go 重寫版本**。
 
@@ -10,7 +10,7 @@
 
 ##### 功能特色
 
-- **可插拔的 Agent 後端** — Kiro、Claude Code、Codex、Gemini、GitHub Copilot（任何 ACP 相容 CLI）
+- **可插拔的 Agent 後端** — Kiro、Claude Code、Codex、GitHub Copilot（任何 ACP 相容 CLI）
 - **Discord 整合** — @mention 觸發、自動建立討論串、多輪對話
 - **Telegram 整合** — 群組中 @mention / 回覆 bot、私聊、語音訊息自動接受、forum topic 支援（每個 topic 一個 session）
 - **語音訊息轉錄** — 透過 OpenAI Whisper API 轉錄語音訊息（Discord & Telegram）
@@ -25,14 +25,13 @@
 
 ##### 可插拔的 Agent 後端
 
-支援 Kiro CLI、Claude Code、Codex、Gemini、GitHub Copilot CLI，以及任何 ACP 相容的 CLI。
+支援 Kiro CLI、Claude Code、Codex、GitHub Copilot CLI，以及任何 ACP 相容的 CLI。
 
 | Agent key | CLI | ACP Adapter | 認證方式 |
 |---|---|---|---|
 | `kiro`（預設） | Kiro CLI | 原生 `kiro-cli acp` | `kiro-cli login --use-device-flow` |
 | `codex` | Codex | [@zed-industries/codex-acp](https://github.com/zed-industries/codex-acp) | `codex login --device-auth` |
 | `claude` | Claude Code | [@agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | `claude auth login` 或 `claude setup-token` |
-| `gemini` | Gemini CLI | 原生 `gemini --acp` | Google OAuth 或 `GEMINI_API_KEY` |
 | `copilot` ⚠️ | GitHub Copilot CLI | 原生 `copilot --acp --stdio` | `gh auth login -p https -w`（需付費 Copilot 訂閱；ACP 支援為 public preview） |
 
 ---
@@ -153,7 +152,7 @@ api_key = "${OPENAI_API_KEY}"
 
 一般 chatbot 語音回覆（約 300 字元）使用 `tts-1` 約花費 **$0.0045**。價格為 2026 年資料，最新請見 [OpenAI pricing](https://openai.com/api/pricing/)。
 
-完整設定參考請見 [`config.toml.example`](config.toml.example)，包含其他 Agent（Claude、Codex、Gemini）的設定範例。
+完整設定參考請見 [`config.toml.example`](config.toml.example)，包含其他 Agent（Claude、Codex）的設定範例。
 
 ---
 
@@ -223,14 +222,13 @@ listen = ":8080"
 
 ##### Docker
 
-每次 release 會發布五種 image 變體：
+每次 release 會發布四種 image 變體：
 
 | Image | Agent |
 |---|---|
 | `ghcr.io/neilkuan/openab-go` | Kiro CLI |
 | `ghcr.io/neilkuan/openab-go-claude` | Claude Code |
 | `ghcr.io/neilkuan/openab-go-codex` | Codex |
-| `ghcr.io/neilkuan/openab-go-gemini` | Gemini CLI |
 | `ghcr.io/neilkuan/openab-go-copilot` | GitHub Copilot CLI |
 
 ```bash
@@ -246,7 +244,7 @@ docker run -v $(pwd)/config.toml:/etc/openab-go/config.toml \
 
 - Go 1.23+
 - Discord bot token（需啟用 `MESSAGE_CONTENT` intent）和/或 Telegram bot token
-- 已安裝 ACP 相容 CLI（如 `kiro-cli`、`claude`、`codex`、`gemini`）
+- 已安裝 ACP 相容 CLI（如 `kiro-cli`、`claude`、`codex`）
 
 ###### 編譯
 
@@ -297,7 +295,6 @@ openab-go/
 ├── Dockerfile           # Kiro CLI 變體
 ├── Dockerfile.claude    # Claude Code 變體
 ├── Dockerfile.codex     # Codex 變體
-├── Dockerfile.gemini    # Gemini CLI 變體
 ├── Dockerfile.copilot   # GitHub Copilot CLI 變體
 ├── config.toml.example  # 設定參考
 ├── VERSION              # Semver 版本
