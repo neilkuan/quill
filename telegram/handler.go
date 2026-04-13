@@ -46,9 +46,18 @@ func (h *Handler) handleUpdate(ctx context.Context, b *bot.Bot, update *models.U
 	}
 	msg := update.Message
 
+	var fromID int64
+	var fromUsername string
+	if msg.From != nil {
+		fromID = msg.From.ID
+		fromUsername = msg.From.Username
+	}
+
 	slog.Debug("telegram update",
 		"chat_id", msg.Chat.ID,
 		"chat_type", msg.Chat.Type,
+		"user_id", fromID,
+		"username", fromUsername,
 		"text", msg.Text,
 		"is_forum", msg.Chat.IsForum,
 		"thread_id", msg.MessageThreadID,
