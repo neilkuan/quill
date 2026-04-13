@@ -57,6 +57,14 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	var inAllowedChannel, inThread bool
 	if len(h.AllowedUserIDs) > 0 {
 		if !h.AllowedUserIDs[m.Author.ID] {
+			// Only log when the user actually tried to address the bot,
+			// otherwise background messages in busy guilds would flood logs.
+			if isMentioned {
+				slog.Warn("🚨👽🚨 discord message from unlisted user (add to allowed_user_id to enable)",
+					"user_id", m.Author.ID,
+					"username", m.Author.Username,
+					"channel_id", m.ChannelID)
+			}
 			return
 		}
 		// Allowed user — accept regardless of channel.
