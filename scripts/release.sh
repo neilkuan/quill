@@ -223,24 +223,29 @@ do_stable() {
 
   local release_branch="release/v${new_ver}"
 
-  # Check if branch already exists
-  if git rev-parse --verify "$release_branch" >/dev/null 2>&1; then
-    die "Branch $release_branch already exists locally"
-  fi
-  if git ls-remote --exit-code origin "refs/heads/$release_branch" >/dev/null 2>&1; then
-    die "Branch $release_branch already exists on remote"
-  fi
-
-  # Check if there's already an open Release PR — if so, rebase it onto main
-  # and force-push so it always reflects the latest state.
-  # This handles the common case where a fix PR is merged into main after the
-  # Release PR is opened: without this, merging the stale Release PR would tag
-  # a commit that does not include the fix.
+  # First: check if there's already an open Release PR. If so, rebase it onto
+  # main and force-push so the release PR always reflects latest main. This
+  # handles the common case where a fix PR is merged into main after the
+  # Release PR is opened — without this, merging the stale Release PR would
+  # tag a commit that does not include the fix.
+  #
+  # This must run BEFORE the "branch already exists" checks below, otherwise
+  # the presence of an already-pushed release branch (the normal steady state
+  # while a Release PR is open) would short-circuit the update path.
   local open_prs
   open_prs="$(gh pr list --base main --state open --json headRefName --jq '.[].headRefName' 2>/dev/null | grep '^release/' || true)"
   if [[ -n "$open_prs" ]]; then
     update_existing_release_pr "$open_prs"
     exit 0
+  fi
+
+  # No open Release PR — creating a new one. Reject if the branch already
+  # exists (leftover from a previous abandoned run).
+  if git rev-parse --verify "$release_branch" >/dev/null 2>&1; then
+    die "Branch $release_branch already exists locally"
+  fi
+  if git ls-remote --exit-code origin "refs/heads/$release_branch" >/dev/null 2>&1; then
+    die "Branch $release_branch already exists on remote"
   fi
 
   if $DRY_RUN; then
