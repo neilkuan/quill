@@ -69,10 +69,14 @@ go run . config.toml
 [discord]
 bot_token = "${DISCORD_BOT_TOKEN}"
 allowed_channels = ["1234567890"]
+# allowed_user_id = ["*"]                    # 萬用字元：任何使用者
+# allowed_user_id = ["823367235137044491"]   # 或指定 Discord user ID
 
 [telegram]
 bot_token = "${TELEGRAM_BOT_TOKEN}"
 allowed_chats = [-100123456789]
+# allowed_user_id = ["*"]             # 萬用字元：任何使用者
+# allowed_user_id = ["123456789"]     # 或指定 Telegram user ID（字串形式）
 
 [agent]
 command = "kiro-cli"
@@ -87,6 +91,24 @@ session_ttl_hours = 24
 enabled = true
 remove_after_reply = false
 ```
+
+##### 使用者白名單（`allowed_user_id`）
+
+在平台區段設定 `allowed_user_id` 後，其**優先權高於** `allowed_channels`（Discord）／`allowed_chats`（Telegram）：只有清單中的使用者可以觸發 bot，**不限 channel / chat**。未設定時維持原本的 channel/chat gate 行為。`["*"]` 是萬用字元，代表任何使用者都可以。
+
+比對的是**數字型 user ID**，不是 username — username 會變，ID 不會。
+
+###### Discord 怎麼取得 user ID
+
+- **從 App：** 開啟開發者模式（`使用者設定 → 進階 → 開發者模式`），然後對使用者頭像右鍵 → **複製使用者 ID**。
+- **從 log：** 用 `OPENAB_GO_LOG=debug` 啟動 bot，傳一則訊息給它，看 `discord message received` 這行 log 的 `author_id=...`。
+
+###### Telegram 怎麼取得 user ID
+
+- **從 Telegram：** 跟 [@userinfobot](https://t.me/userinfobot) 講話，它會回你的數字 ID。
+- **從 log：** 用 `OPENAB_GO_LOG=debug` 啟動 bot，傳一則訊息，看 `telegram update` 這行 log 的 `user_id=...`。
+
+Telegram 的 ID 在 TOML 中要加引號（`["123456789"]`，不是 `[123456789]`），這樣 `"*"` 才能和數字 ID 並存於同一陣列中。
 
 ##### STT — 語音轉文字（選用）
 
