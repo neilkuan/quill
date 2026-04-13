@@ -9,25 +9,18 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.commit=${COMMIT}" -o openab-g
 
 # --- Runtime stage ---
 FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl procps && rm -rf /var/lib/apt/lists/*
 
-ARG GH_CLI_VERSION=2.74.1
+# Install GitHub Copilot CLI via npm (pinned version)
+RUN npm install -g @github/copilot@1 --retry 3
 
-# Layer 1: stable system packages (rarely changes)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl procps \
-    && rm -rf /var/lib/apt/lists/*
-
-# Layer 2: gh CLI (pinned version, cacheable) — required for Copilot CLI auth (device flow)
-RUN ARCH=$(dpkg --print-architecture) \
-    && curl -sSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_${ARCH}.tar.gz" \
-       | tar xz -C /tmp \
-    && mv /tmp/gh_${GH_CLI_VERSION}_linux_${ARCH}/bin/gh /usr/local/bin/gh \
-    && rm -rf /tmp/*
-
-# Layer 3: npm packages (pinned versions, cacheable)
-# @github/copilot ships native ACP support (public preview since 2026-01-28)
-RUN npm install -g @github/copilot@1 --retry 3 \
-    && npm cache clean --force
+# Install gh CLI (for auth and token management)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh && \
+    rm -rf /var/lib/apt/lists/*
 
 ENV HOME=/home/node
 WORKDIR /home/node
