@@ -326,6 +326,6 @@ See [RELEASING.md](RELEASING.md) for the full workflow.
 
 ---
 
-##### License
+# License
 
 [MIT](LICENSE)
