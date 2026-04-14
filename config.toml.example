@@ -142,8 +142,10 @@ session_ttl_hours = 24
 #
 # --- Groq Cloud ---
 # Note: Groq TTS currently supports English and Arabic only.
+# Models: canopylabs/orpheus-v1-english, canopylabs/orpheus-arabic-saudi
+# Voices: troy, hannah, austin
 # [tts]
 # api_key = "${GROQ_API_KEY}"
 # provider = "groq"
-# model = "playai-tts"                 # or "playai-tts-arabic"
-# voice = "fritz-playai"               # fritz-playai, hannah-playai, etc.
+# model = "canopylabs/orpheus-v1-english"
+# voice = "troy"

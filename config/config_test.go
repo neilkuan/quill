@@ -696,14 +696,14 @@ provider = "groq"
 	if cfg.TTS.Provider != "groq" {
 		t.Fatalf("expected provider 'groq', got %q", cfg.TTS.Provider)
 	}
-	if cfg.TTS.Model != "playai-tts" {
-		t.Fatalf("expected default groq model 'playai-tts', got %q", cfg.TTS.Model)
+	if cfg.TTS.Model != "canopylabs/orpheus-v1-english" {
+		t.Fatalf("expected default groq model 'canopylabs/orpheus-v1-english', got %q", cfg.TTS.Model)
 	}
 	if cfg.TTS.BaseURL != "https://api.groq.com/openai/v1" {
 		t.Fatalf("expected default groq base_url, got %q", cfg.TTS.BaseURL)
 	}
-	if cfg.TTS.Voice != "fritz-playai" {
-		t.Fatalf("expected default groq voice 'fritz-playai', got %q", cfg.TTS.Voice)
+	if cfg.TTS.Voice != "troy" {
+		t.Fatalf("expected default groq voice 'troy', got %q", cfg.TTS.Voice)
 	}
 }
 

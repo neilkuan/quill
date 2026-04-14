@@ -235,10 +235,10 @@ func applyTTSDefaults(tc *TTSConfig) {
 			tc.BaseURL = "https://api.groq.com/openai/v1"
 		}
 		if tc.Model == "" {
-			tc.Model = "playai-tts"
+			tc.Model = "canopylabs/orpheus-v1-english"
 		}
 		if tc.Voice == "" {
-			tc.Voice = "fritz-playai"
+			tc.Voice = "troy"
 		}
 	default: // "openai"
 		if tc.Model == "" {
