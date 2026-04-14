@@ -1,10 +1,10 @@
-# OpenAB-GO Docker Compose Usage Guide
+# Quill Docker Compose Usage Guide
 
 ## Overview
 
 This docker-compose configuration starts two AI assistant services:
-- **kiro**: OpenAB-GO's Kiro assistant
-- **claude**: OpenAB-GO's Claude assistant
+- **kiro**: Quill's Kiro assistant
+- **claude**: Quill's Claude assistant
 
 ## Directory Structure
 
