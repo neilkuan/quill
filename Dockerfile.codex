@@ -24,8 +24,8 @@ RUN ARCH=$(dpkg --print-architecture) \
     && mv /tmp/gh_${GH_CLI_VERSION}_linux_${ARCH}/bin/gh /usr/local/bin/gh \
     && rm -rf /tmp/*
 
-# Layer 3: npm packages (pinned versions, cacheable)
-RUN npm install -g @zed-industries/codex-acp@0.9.5 @openai/codex --retry 3 \
+# Layer 3: npm packages (all versions pinned to ensure cache correctness)
+RUN npm install -g @zed-industries/codex-acp@0.11.1 @openai/codex@0.120.0 --retry 3 \
     && npm cache clean --force
 
 ENV HOME=/home/node
