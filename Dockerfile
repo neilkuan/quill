@@ -11,13 +11,15 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.commit=${COMMIT}" -o quill .
 FROM debian:bookworm-slim
 
 ARG GH_CLI_VERSION=2.74.1
+# Change KIRO_CLI_CACHE_BUST to force re-download of kiro-cli (no versioned URL available)
+ARG KIRO_CLI_CACHE_BUST=2026-04-14
 
 # Layer 1: stable system packages (rarely changes)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl unzip procps git \
     && rm -rf /var/lib/apt/lists/*
 
-# Layer 2: kiro-cli + gh CLI (pinned versions, cacheable)
+# Layer 2: kiro-cli + gh CLI (cache invalidated by KIRO_CLI_CACHE_BUST)
 RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" = "arm64" ]; then \
          KIRO_URL="https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-aarch64-linux.zip"; \

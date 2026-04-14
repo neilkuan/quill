@@ -79,7 +79,9 @@ jobs:
           context: .
           file: ${{ matrix.variant.dockerfile }}
           platforms: ${{ matrix.platform.os }}
-          build-args: COMMIT=${{ github.sha }}
+          build-args: |
+            COMMIT=${{ github.sha }}
+            KIRO_CLI_CACHE_BUST=${{ github.run_id }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }}:cache-${{ matrix.platform.runner }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }}:cache-${{ matrix.platform.runner }},mode=max
