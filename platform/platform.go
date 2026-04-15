@@ -81,6 +81,18 @@ const (
 	ToolDisplayNone    = "none"
 )
 
+// genericStatusVerbs are leading tokens that describe *state*, not the tool.
+// Some agents (notably kiro-cli) format every tool title as
+// "Running: <cmd> <args>", which makes compact mode collapse every tool line
+// to the literal string "Running" and the user can't tell calls apart.
+// Strip these before picking a label.
+var genericStatusVerbs = map[string]bool{
+	"running":   true,
+	"executing": true,
+	"invoking":  true,
+	"calling":   true,
+}
+
 // FormatToolTitle returns the title to render in the streamed chat message
 // for an ACP tool-call event, based on the configured display mode.
 //
@@ -95,10 +107,11 @@ const (
 //
 // Modes:
 //   - "full"    — return the title unchanged.
-//   - "compact" — return the first whitespace-delimited token, with trailing
-//     punctuation (":") stripped. Keeps callers informed that a tool is
-//     running without leaking long/sensitive argument lists. Falls back to
-//     the full title when it has no whitespace.
+//   - "compact" — strip a leading generic status verb (e.g. "Running:"),
+//     then return the first whitespace-delimited token with trailing
+//     punctuation (":") stripped. Keeps callers informed *which* tool is
+//     running (e.g. "gh", "bash", "curl") without leaking long/sensitive
+//     argument lists. Falls back to the full title when it has no whitespace.
 //   - "none"    — skip the tool line.
 //
 // Unrecognised modes fall back to "full" (safest — preserves existing
@@ -113,6 +126,12 @@ func FormatToolTitle(title, mode string) (string, bool) {
 	switch mode {
 	case ToolDisplayCompact:
 		trimmed := strings.TrimSpace(title)
+		// Drop a leading generic status verb — this is the sole reason
+		// "Running: gh ..." / "Running: curl ..." used to collapse into a
+		// single indistinguishable "Running" label.
+		if rest, ok := stripGenericStatusVerb(trimmed); ok {
+			trimmed = rest
+		}
 		first := trimmed
 		if idx := strings.IndexAny(trimmed, " \t\n"); idx > 0 {
 			first = trimmed[:idx]
@@ -125,6 +144,22 @@ func FormatToolTitle(title, mode string) (string, bool) {
 	default: // "full" or empty/unknown
 		return title, true
 	}
+}
+
+// stripGenericStatusVerb removes a leading "Running:" / "Executing:" /
+// "Invoking:" / "Calling:" (case-insensitive, trailing ":" optional) and
+// returns the remainder trimmed. Returns (title, false) if no such prefix.
+func stripGenericStatusVerb(title string) (string, bool) {
+	idx := strings.IndexAny(title, " \t\n")
+	if idx <= 0 {
+		return title, false
+	}
+	firstRaw := title[:idx]
+	first := strings.ToLower(strings.TrimRight(firstRaw, ":,;"))
+	if !genericStatusVerbs[first] {
+		return title, false
+	}
+	return strings.TrimSpace(title[idx:]), true
 }
 
 // TruncateUTF8 truncates text to at most limit bytes without cutting multi-byte characters.

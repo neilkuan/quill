@@ -2,8 +2,10 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 
 	"github.com/go-telegram/bot"
@@ -57,6 +59,7 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber st
 
 	b, err := bot.New(cfg.BotToken,
 		bot.WithDefaultHandler(h.handleUpdate),
+		bot.WithErrorsHandler(logTelegramError),
 	)
 	if err != nil {
 		return nil, err
@@ -109,4 +112,31 @@ func (a *Adapter) Stop() error {
 		a.cancel()
 	}
 	return nil
+}
+
+// logTelegramError routes errors raised inside go-telegram/bot (e.g. the
+// getUpdates long-polling loop) through slog. Transient network failures such
+// as `context deadline exceeded` when switching Wi-Fi are logged at Warn with
+// a "transient" tag — the library already applies exponential backoff and
+// keeps retrying, so these are expected and self-healing.
+func logTelegramError(err error) {
+	if err == nil {
+		return
+	}
+	if isTransientNetworkError(err) {
+		slog.Warn("telegram getUpdates transient network error (auto-retry)", "error", err)
+		return
+	}
+	slog.Error("telegram bot error", "error", err)
+}
+
+func isTransientNetworkError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
 }

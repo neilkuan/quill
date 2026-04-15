@@ -191,7 +191,6 @@ func TestFormatToolTitle(t *testing.T) {
 
 		// compact mode
 		{"compact single token unchanged", "Bash", "compact", "Bash", true},
-		{"compact strips args after space", `Running: curl -s "https://..."`, "compact", "Running", true},
 		{"compact strips colon suffix", "Read:", "compact", "Read", true},
 		{"compact handles tab separator", "Edit\t/etc/passwd", "compact", "Edit", true},
 		{"compact trims surrounding whitespace", "  Bash  ", "compact", "Bash", true},
@@ -199,6 +198,18 @@ func TestFormatToolTitle(t *testing.T) {
 		{"compact whitespace-only title skipped", "  \t\n", "compact", "", false},
 		{"full empty title skipped", "", "full", "", false},
 		{"compact punctuation-only token falls back to trimmed", ": arg", "compact", ": arg", true},
+
+		// compact mode — kiro-cli "Running: <cmd>" regression (prev: all collapsed to "Running")
+		{"compact kiro running curl", `Running: curl -s "https://..."`, "compact", "curl", true},
+		{"compact kiro running gh", "Running: gh repo list splashtop", "compact", "gh", true},
+		{"compact kiro running bash", `Running: bash -c "cat /etc/passwd"`, "compact", "bash", true},
+		{"compact kiro running no colon", "Running gh repo list", "compact", "gh", true},
+		{"compact kiro executing", "Executing: python script.py", "compact", "python", true},
+		{"compact kiro invoking", "Invoking: curl api.example.com", "compact", "curl", true},
+		{"compact kiro calling", "Calling: fetch_user 123", "compact", "fetch_user", true},
+		{"compact kiro running lowercase", "running: curl x", "compact", "curl", true},
+		{"compact running alone not stripped", "Running", "compact", "Running", true},
+		{"compact non-status prefix preserved", "Read: /etc/passwd", "compact", "Read", true},
 
 		// none mode
 		{"none skips rendering", "Bash", "none", "", false},
