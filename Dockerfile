@@ -15,8 +15,11 @@ ARG GH_CLI_VERSION=2.89.0
 ARG KIRO_CLI_CACHE_BUST=2026-04-14
 
 # Layer 1: stable system packages (rarely changes)
+# tini is needed as PID 1 so zombie children spawned by the agent (e.g.
+# `bash -c ...` tool calls) get reaped — without it Go's quill process ends up
+# as PID 1 but does not handle SIGCHLD, so zombies accumulate.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl unzip procps git \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip procps git tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Layer 2: kiro-cli + gh CLI (cache invalidated by KIRO_CLI_CACHE_BUST)
@@ -46,5 +49,5 @@ COPY --from=builder --chown=agent:agent /build/quill /usr/local/bin/quill
 USER agent
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD pgrep -x quill || exit 1
-ENTRYPOINT ["quill"]
+ENTRYPOINT ["/usr/bin/tini", "--", "quill"]
 CMD ["/etc/quill/config.toml"]
