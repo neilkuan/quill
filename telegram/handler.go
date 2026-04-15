@@ -25,10 +25,10 @@ import (
 )
 
 type Handler struct {
-	Bot             *bot.Bot
-	Pool            *acp.SessionPool
-	AllowedChats    map[int64]bool
-	AllowedUserIDs  map[int64]bool
+	Bot            *bot.Bot
+	Pool           *acp.SessionPool
+	AllowedChats   map[int64]bool
+	AllowedUserIDs map[int64]bool
 	// AllowAnyUser is true when allowed_user_id contains "*" — anyone can talk
 	// to the bot from any chat.
 	AllowAnyUser    bool
@@ -404,6 +404,9 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 	case command.CmdReset:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		response = command.ExecuteReset(h.Pool, sessionKey)
+	case command.CmdResume:
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
+		response = command.ExecuteResume(h.Pool, sessionKey)
 	case command.CmdSetVoice:
 		response = h.handleSetVoice(ctx, b, msg, userID)
 	case command.CmdVoiceClear:
@@ -450,10 +453,7 @@ func (h *Handler) streamPrompt(
 ) (string, error) {
 	var finalText string
 	err := h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
-		reset := conn.SessionReset
-		conn.SessionReset = false
-
-		rx, _, err := conn.SessionPrompt(content)
+		rx, _, reset, resumed, err := conn.SessionPrompt(content)
 		if err != nil {
 			return err
 		}
@@ -461,14 +461,18 @@ func (h *Handler) streamPrompt(
 
 		var textBuf strings.Builder
 		var toolLines []string
-		if reset {
+		if resumed {
+			textBuf.WriteString("🔄 _Session restored from previous conversation._\n\n")
+		} else if reset {
 			textBuf.WriteString("⚠️ _Session expired, starting fresh..._\n\n")
 		}
 
 		// Edit-streaming goroutine (2s interval for Telegram rate limits)
 		var displayMu sync.Mutex
 		currentDisplay := "💭 _thinking..._"
-		if reset {
+		if resumed {
+			currentDisplay = "🔄 _Session restored, continuing..._\n\n..."
+		} else if reset {
 			currentDisplay = "⚠️ _Session expired, starting fresh..._\n\n..."
 		}
 		done := make(chan struct{})

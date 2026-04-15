@@ -11,6 +11,7 @@ import (
 const (
 	CmdSessions   = "sessions"
 	CmdReset      = "reset"
+	CmdResume     = "resume"
 	CmdInfo       = "info"
 	CmdSetVoice   = "setvoice"
 	CmdVoiceClear = "voice-clear"
@@ -32,7 +33,7 @@ func ParseCommand(text string) (*Command, bool) {
 
 	name := strings.ToLower(parts[0])
 	known := map[string]bool{
-		CmdSessions: true, CmdReset: true, CmdInfo: true,
+		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true,
 		CmdSetVoice: true, CmdVoiceClear: true, CmdVoiceMode: true,
 	}
 	if !known[name] {
@@ -97,12 +98,15 @@ type VoiceInfo struct {
 func ExecuteInfo(pool *acp.SessionPool, threadKey string, voice *VoiceInfo) string {
 	info, err := pool.GetSessionInfo(threadKey)
 	if err != nil {
-		return fmt.Sprintf("No active session for this thread.")
+		return "No active session for this thread."
 	}
 
 	status := "Running"
 	if !info.Alive {
 		status = "Dead"
+	}
+	if info.Resumed {
+		status += " (restored)"
 	}
 
 	var sb strings.Builder
@@ -145,10 +149,16 @@ func ExecuteInfo(pool *acp.SessionPool, threadKey string, voice *VoiceInfo) stri
 
 // ExecuteReset kills the current session and returns a status message.
 func ExecuteReset(pool *acp.SessionPool, threadKey string) string {
-	if err := pool.KillSession(threadKey); err != nil {
+	if err := pool.ResetSession(threadKey); err != nil {
 		return "No active session to reset."
 	}
 	return "Session reset. A new session will be created on the next message."
+}
+
+// ExecuteResume attempts to restore a previous session for this thread.
+func ExecuteResume(pool *acp.SessionPool, threadKey string) string {
+	_, msg := pool.ResumeSession(threadKey)
+	return msg
 }
 
 func formatDuration(d time.Duration) string {

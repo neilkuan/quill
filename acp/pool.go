@@ -14,6 +14,7 @@ type SessionInfo struct {
 	LastActive   time.Time `json:"last_active"`
 	MessageCount uint64    `json:"message_count"`
 	Alive        bool      `json:"alive"`
+	Resumed      bool      `json:"resumed"`
 }
 
 type SessionPool struct {
@@ -24,6 +25,7 @@ type SessionPool struct {
 	workingDir  string
 	env         map[string]string
 	maxSessions int
+	store       *SessionStore
 }
 
 func (p *SessionPool) WorkingDir() string {
@@ -31,6 +33,11 @@ func (p *SessionPool) WorkingDir() string {
 }
 
 func NewSessionPool(command string, args []string, workingDir string, env map[string]string, maxSessions int) *SessionPool {
+	store, err := NewSessionStore(workingDir)
+	if err != nil {
+		slog.Warn("session store unavailable, resume disabled", "error", err)
+	}
+
 	return &SessionPool{
 		connections: make(map[string]*AcpConnection),
 		command:     command,
@@ -38,6 +45,7 @@ func NewSessionPool(command string, args []string, workingDir string, env map[st
 		workingDir:  workingDir,
 		env:         env,
 		maxSessions: maxSessions,
+		store:       store,
 	}
 }
 
@@ -55,6 +63,7 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 	defer p.mu.Unlock()
 
 	// Double-check after acquiring write lock
+	wasStale := false
 	if conn, ok := p.connections[threadID]; ok {
 		if conn.Alive() {
 			return nil
@@ -62,6 +71,7 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 		slog.Warn("stale connection, rebuilding", "thread_id", threadID)
 		conn.Kill()
 		delete(p.connections, threadID)
+		wasStale = true
 	}
 
 	if len(p.connections) >= p.maxSessions {
@@ -69,9 +79,9 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 		var lruKey string
 		var lruTime time.Time
 		for key, conn := range p.connections {
-			if lruTime.IsZero() || conn.LastActive.Before(lruTime) {
+			if lruTime.IsZero() || conn.GetLastActive().Before(lruTime) {
 				lruKey = key
-				lruTime = conn.LastActive
+				lruTime = conn.GetLastActive()
 			}
 		}
 		if lruKey != "" {
@@ -91,13 +101,37 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 		return err
 	}
 
-	if _, err := conn.SessionNew(p.workingDir); err != nil {
-		conn.Kill()
-		return err
+	// Try to resume a previous session if the store has one and agent supports it
+	resumed := false
+	if p.store != nil && conn.CanLoadSession {
+		if oldSessionID := p.store.Lookup(threadID); oldSessionID != "" {
+			slog.Info("attempting session resume", "thread_id", threadID, "old_session_id", oldSessionID)
+			if err := conn.SessionLoad(oldSessionID, p.workingDir); err != nil {
+				slog.Warn("session resume failed, creating new session", "thread_id", threadID, "error", err)
+			} else {
+				resumed = true
+				p.store.Touch(threadID) // update LastActive
+			}
+		}
 	}
 
-	if _, existed := p.connections[threadID]; existed {
-		conn.SessionReset = true
+	if !resumed {
+		sessionID, err := conn.SessionNew(p.workingDir)
+		if err != nil {
+			conn.Kill()
+			return err
+		}
+		// Persist the new session ID
+		if p.store != nil {
+			if err := p.store.Save(threadID, sessionID); err != nil {
+				slog.Warn("failed to persist session ID, resume will be unavailable", "thread_id", threadID, "error", err)
+			}
+		}
+		// If we had a stale connection, mark as reset so the handler
+		// shows "Session expired, starting fresh..."
+		if wasStale {
+			conn.SessionReset = true
+		}
 	}
 
 	p.connections[threadID] = conn
@@ -124,7 +158,7 @@ func (p *SessionPool) CleanupIdle(ttlSecs int64) {
 
 	var stale []string
 	for key, conn := range p.connections {
-		if conn.LastActive.Before(cutoff) || !conn.Alive() {
+		if conn.GetLastActive().Before(cutoff) || !conn.Alive() {
 			stale = append(stale, key)
 		}
 	}
@@ -161,9 +195,10 @@ func (p *SessionPool) ListSessions() []SessionInfo {
 			ThreadKey:    key,
 			SessionID:    conn.SessionID,
 			CreatedAt:    conn.CreatedAt,
-			LastActive:   conn.LastActive,
+			LastActive:   conn.GetLastActive(),
 			MessageCount: conn.MessageCount.Load(),
 			Alive:        conn.Alive(),
+			Resumed:      conn.WasResumed,
 		})
 	}
 	return sessions
@@ -182,13 +217,15 @@ func (p *SessionPool) GetSessionInfo(threadKey string) (*SessionInfo, error) {
 		ThreadKey:    threadKey,
 		SessionID:    conn.SessionID,
 		CreatedAt:    conn.CreatedAt,
-		LastActive:   conn.LastActive,
+		LastActive:   conn.GetLastActive(),
 		MessageCount: conn.MessageCount.Load(),
 		Alive:        conn.Alive(),
+		Resumed:      conn.WasResumed,
 	}, nil
 }
 
 // KillSession terminates a specific session and removes it from the pool.
+// The session store entry is preserved so /resume can find it later.
 func (p *SessionPool) KillSession(threadKey string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -201,6 +238,86 @@ func (p *SessionPool) KillSession(threadKey string) error {
 	conn.Kill()
 	delete(p.connections, threadKey)
 	return nil
+}
+
+// ResetSession terminates a session AND clears its store entry (full fresh start).
+func (p *SessionPool) ResetSession(threadKey string) error {
+	if err := p.KillSession(threadKey); err != nil {
+		return err
+	}
+	if p.store != nil {
+		p.store.Remove(threadKey)
+	}
+	return nil
+}
+
+// ResumeSession explicitly attempts to resume a previous session for the given thread.
+// Returns (resumed bool, message string).
+// - If no stored session exists: returns false with explanation.
+// - If agent doesn't support loadSession: returns false with explanation.
+// - If session/load succeeds: returns true.
+// - If session/load fails: falls back to session/new and returns false with explanation.
+func (p *SessionPool) ResumeSession(threadKey string) (bool, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Kill existing connection if any
+	if conn, ok := p.connections[threadKey]; ok {
+		conn.Kill()
+		delete(p.connections, threadKey)
+	}
+
+	// Check store for previous session ID
+	if p.store == nil {
+		return false, "Session store is not available."
+	}
+	oldSessionID := p.store.Lookup(threadKey)
+	if oldSessionID == "" {
+		return false, "No previous session found for this thread."
+	}
+
+	// Spawn fresh agent process
+	conn, err := SpawnConnection(p.command, p.args, p.workingDir, p.env, threadKey)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to start agent: `%v`", err)
+	}
+
+	if err := conn.Initialize(); err != nil {
+		conn.Kill()
+		return false, fmt.Sprintf("Agent initialization failed: `%v`", err)
+	}
+
+	if !conn.CanLoadSession {
+		// Agent doesn't support session/load — fall back to new session
+		if _, err := conn.SessionNew(p.workingDir); err != nil {
+			conn.Kill()
+			return false, fmt.Sprintf("Failed to create new session: `%v`", err)
+		}
+		if err := p.store.Save(threadKey, conn.SessionID); err != nil {
+			slog.Warn("failed to persist session ID", "thread_key", threadKey, "error", err)
+		}
+		p.connections[threadKey] = conn
+		return false, fmt.Sprintf("Agent does not support session resume (`loadSession` capability not advertised). A new session has been created.\n\nPrevious session ID was: `%s`", oldSessionID)
+	}
+
+	// Attempt session/load
+	if err := conn.SessionLoad(oldSessionID, p.workingDir); err != nil {
+		slog.Warn("explicit resume failed, falling back to new session",
+			"thread_key", threadKey, "old_session_id", oldSessionID, "error", err)
+		if _, newErr := conn.SessionNew(p.workingDir); newErr != nil {
+			conn.Kill()
+			return false, fmt.Sprintf("Resume failed (`%v`) and new session also failed: `%v`", err, newErr)
+		}
+		if saveErr := p.store.Save(threadKey, conn.SessionID); saveErr != nil {
+			slog.Warn("failed to persist session ID", "thread_key", threadKey, "error", saveErr)
+		}
+		p.connections[threadKey] = conn
+		return false, fmt.Sprintf("Could not restore previous session (`%s`): `%v`\n\nA new session has been created.", oldSessionID, err)
+	}
+
+	p.store.Touch(threadKey)
+	p.connections[threadKey] = conn
+	return true, fmt.Sprintf("🔄 Session restored! Continuing conversation from `%s`.", oldSessionID)
 }
 
 // Stats returns pool utilization.

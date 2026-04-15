@@ -33,3 +33,39 @@ func TestSpawnConnection_InvalidCommand(t *testing.T) {
 		t.Fatal("expected error for invalid command")
 	}
 }
+
+func TestAcpConnection_DefaultFields(t *testing.T) {
+	// Verify that a freshly constructed AcpConnection has the expected defaults
+	// for the new session resume fields.
+	conn := &AcpConnection{
+		pending: make(map[uint64]chan *JsonRpcMessage),
+	}
+
+	if conn.CanLoadSession {
+		t.Error("expected CanLoadSession to be false by default")
+	}
+	if conn.SessionResumed {
+		t.Error("expected SessionResumed to be false by default")
+	}
+	if conn.SessionReset {
+		t.Error("expected SessionReset to be false by default")
+	}
+	if conn.SessionID != "" {
+		t.Errorf("expected empty SessionID, got %q", conn.SessionID)
+	}
+}
+
+func TestAcpConnection_SessionLoadWithoutCapability(t *testing.T) {
+	conn := &AcpConnection{
+		pending:        make(map[uint64]chan *JsonRpcMessage),
+		CanLoadSession: false,
+	}
+
+	err := conn.SessionLoad("sess_123", "/tmp")
+	if err == nil {
+		t.Fatal("expected error when CanLoadSession is false")
+	}
+	if err.Error() != "agent does not support session/load" {
+		t.Errorf("unexpected error message: %q", err.Error())
+	}
+}

@@ -174,6 +174,26 @@ func TestExtractCommand(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "resume command",
+			msg: &models.Message{
+				Text: "/resume",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 7},
+				},
+			},
+			want: "resume",
+		},
+		{
+			name: "resume command with bot name",
+			msg: &models.Message{
+				Text: "/resume@mybot",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 13},
+				},
+			},
+			want: "resume",
+		},
+		{
 			name: "no command",
 			msg: &models.Message{
 				Text: "hello world",

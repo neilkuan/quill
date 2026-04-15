@@ -418,6 +418,10 @@ var slashCommands = []*discordgo.ApplicationCommand{
 		Description: "Reset the current session (kills agent, fresh start on next message)",
 	},
 	{
+		Name:        "resume",
+		Description: "Attempt to restore a previous session for this thread",
+	},
+	{
 		Name:        "setvoice",
 		Description: "Set your custom bot voice (attach a 3-10s audio file)",
 	},
@@ -476,6 +480,9 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	case command.CmdReset:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteReset(h.Pool, threadKey)
+	case command.CmdResume:
+		threadKey := buildSessionKey(i.ChannelID)
+		response = command.ExecuteResume(h.Pool, threadKey)
 	case command.CmdSetVoice:
 		response = h.handleSetVoice(s, i, userID)
 	case command.CmdVoiceClear:
@@ -513,23 +520,24 @@ func streamPrompt(
 ) (string, error) {
 	var finalText string
 	err := pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
-		reset := conn.SessionReset
-		conn.SessionReset = false
-
-		rx, _, err := conn.SessionPrompt(content)
+		rx, _, reset, resumed, err := conn.SessionPrompt(content)
 		if err != nil {
 			return err
 		}
 		reactions.SetThinking()
 
 		initial := "💭 _thinking..._"
-		if reset {
+		if resumed {
+			initial = "🔄 _Session restored, continuing..._\n\n..."
+		} else if reset {
 			initial = "⚠️ _Session expired, starting fresh..._\n\n..."
 		}
 
 		var textBuf strings.Builder
 		var toolLines []string
-		if reset {
+		if resumed {
+			textBuf.WriteString("🔄 _Session restored from previous conversation._\n\n")
+		} else if reset {
 			textBuf.WriteString("⚠️ _Session expired, starting fresh..._\n\n")
 		}
 

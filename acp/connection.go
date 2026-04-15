@@ -16,23 +16,36 @@ import (
 )
 
 type AcpConnection struct {
-	cmd          *exec.Cmd
-	stdin        io.WriteCloser
-	stdinMu      sync.Mutex
-	stderrBuf    *bytes.Buffer
-	nextID       atomic.Uint64
-	pending      map[uint64]chan *JsonRpcMessage
-	pendingMu    sync.Mutex
-	notifyCh     chan *JsonRpcMessage
-	notifyMu     sync.Mutex
-	promptMu     sync.Mutex // serialize prompts — only one at a time per connection
-	SessionID    string
-	LastActive   time.Time
-	CreatedAt    time.Time
-	MessageCount atomic.Uint64
-	ThreadKey    string
-	SessionReset bool
-	alive        atomic.Bool
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	stdinMu        sync.Mutex
+	stderrBuf      *bytes.Buffer
+	nextID         atomic.Uint64
+	pending        map[uint64]chan *JsonRpcMessage
+	pendingMu      sync.Mutex
+	notifyCh       chan *JsonRpcMessage
+	notifyMu       sync.Mutex
+	promptMu       sync.Mutex // serialize prompts — only one at a time per connection
+	SessionID      string
+	lastActive     atomic.Int64 // unix nano — use GetLastActive/touchLastActive
+	CreatedAt      time.Time
+	MessageCount   atomic.Uint64
+	ThreadKey      string
+	SessionReset   bool
+	SessionResumed bool // true when session was restored via session/load (cleared after first prompt)
+	WasResumed     bool // true when session was restored via session/load (persistent, for /info)
+	CanLoadSession bool // true when agent advertises loadSession capability
+	alive          atomic.Bool
+}
+
+// GetLastActive returns the last activity time (safe for concurrent reads).
+func (c *AcpConnection) GetLastActive() time.Time {
+	return time.Unix(0, c.lastActive.Load())
+}
+
+// touchLastActive updates the last activity timestamp (safe for concurrent writes).
+func (c *AcpConnection) touchLastActive() {
+	c.lastActive.Store(time.Now().UnixNano())
 }
 
 func expandEnv(val string) string {
@@ -72,14 +85,14 @@ func SpawnConnection(command string, args []string, workingDir string, env map[s
 
 	now := time.Now()
 	conn := &AcpConnection{
-		cmd:        cmd,
-		stdin:      stdinPipe,
-		stderrBuf:  &stderrBuf,
-		pending:    make(map[uint64]chan *JsonRpcMessage),
-		LastActive: now,
-		CreatedAt:  now,
-		ThreadKey:  threadKey,
+		cmd:       cmd,
+		stdin:     stdinPipe,
+		stderrBuf: &stderrBuf,
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		CreatedAt: now,
+		ThreadKey: threadKey,
 	}
+	conn.lastActive.Store(now.UnixNano())
 	conn.nextID.Store(1)
 	conn.alive.Store(true)
 
@@ -257,12 +270,18 @@ func (c *AcpConnection) Initialize() error {
 			AgentInfo struct {
 				Name string `json:"name"`
 			} `json:"agentInfo"`
+			AgentCapabilities struct {
+				LoadSession bool `json:"loadSession"`
+			} `json:"agentCapabilities"`
 		}
-		if err := json.Unmarshal(*resp.Result, &result); err == nil && result.AgentInfo.Name != "" {
-			agentName = result.AgentInfo.Name
+		if err := json.Unmarshal(*resp.Result, &result); err == nil {
+			if result.AgentInfo.Name != "" {
+				agentName = result.AgentInfo.Name
+			}
+			c.CanLoadSession = result.AgentCapabilities.LoadSession
 		}
 	}
-	slog.Info("initialized", "agent", agentName)
+	slog.Info("initialized", "agent", agentName, "load_session", c.CanLoadSession)
 	return nil
 }
 
@@ -294,18 +313,56 @@ func (c *AcpConnection) SessionNew(cwd string) (string, error) {
 	return result.SessionID, nil
 }
 
+// SessionLoad attempts to resume a previous session by ID.
+// The agent replays conversation history as session/update notifications,
+// then responds to signal load is complete.
+// Returns nil on success; the caller can then use SessionPrompt as normal.
+func (c *AcpConnection) SessionLoad(sessionID string, cwd string) error {
+	if !c.CanLoadSession {
+		return fmt.Errorf("agent does not support session/load")
+	}
+
+	resp, err := c.sendRequest("session/load", map[string]interface{}{
+		"sessionId":  sessionID,
+		"cwd":        cwd,
+		"mcpServers": []interface{}{},
+	})
+	if err != nil {
+		return fmt.Errorf("session/load failed: %w", err)
+	}
+
+	// session/load may return null result on success
+	if resp.Error != nil {
+		return fmt.Errorf("session/load error: %s", resp.Error.Message)
+	}
+
+	slog.Info("session loaded", "session_id", sessionID)
+	c.SessionID = sessionID
+	c.SessionResumed = true
+	c.WasResumed = true
+	return nil
+}
+
 // SessionPrompt sends a prompt and returns a channel for streaming notifications.
 // The final message on the channel will have ID set (the prompt response).
 // Only one prompt may be active at a time — concurrent callers block until PromptDone.
-func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMessage, uint64, error) {
+// Returns the notification channel, request ID, whether this is a reset, whether
+// this is a resumed session, and any error.
+func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMessage, uint64, bool, bool, error) {
 	c.promptMu.Lock() // released by PromptDone
 
-	c.LastActive = time.Now()
+	// Consume one-shot flags under promptMu to avoid races
+	reset := c.SessionReset
+	c.SessionReset = false
+	resumed := c.SessionResumed
+	c.SessionResumed = false
+
+	c.touchLastActive()
 	c.MessageCount.Add(1)
 
 	if c.SessionID == "" {
 		c.promptMu.Unlock()
-		return nil, 0, fmt.Errorf("no session")
+		return nil, 0, false, false, fmt.Errorf("no session")
 	}
 
 	notifyCh := make(chan *JsonRpcMessage, 256)
@@ -321,7 +378,7 @@ func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMe
 	data, err := json.Marshal(req)
 	if err != nil {
 		c.promptMu.Unlock()
-		return nil, 0, err
+		return nil, 0, false, false, err
 	}
 
 	respCh := make(chan *JsonRpcMessage, 1)
@@ -331,10 +388,10 @@ func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMe
 
 	if err := c.sendRaw(string(data)); err != nil {
 		c.promptMu.Unlock()
-		return nil, 0, err
+		return nil, 0, false, false, err
 	}
 
-	return notifyCh, id, nil
+	return notifyCh, id, reset, resumed, nil
 }
 
 // PromptDone cleans up the notification subscriber after prompt streaming is done.
@@ -343,7 +400,7 @@ func (c *AcpConnection) PromptDone() {
 	c.notifyMu.Lock()
 	c.notifyCh = nil
 	c.notifyMu.Unlock()
-	c.LastActive = time.Now()
+	c.touchLastActive()
 	c.promptMu.Unlock()
 }
 

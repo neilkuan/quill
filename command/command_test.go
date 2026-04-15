@@ -15,13 +15,16 @@ func TestParseCommand(t *testing.T) {
 		{"Sessions", CmdSessions, true},
 		{"SESSIONS", CmdSessions, true},
 		{"reset", CmdReset, true},
+		{"resume", CmdResume, true},
+		{"Resume", CmdResume, true},
+		{"RESUME", CmdResume, true},
 		{"info", CmdInfo, true},
 		{"sessions extra args", CmdSessions, true},
 		{"hello world", "", false},
 		{"", "", false},
 		{"   sessions   ", CmdSessions, true},
 		{"reset now", CmdReset, true},
-		{"session", "", false},  // not "sessions"
+		{"session", "", false}, // not "sessions"
 		// Telegram msg.Command() returns bare name without /
 		// Discord slash commands also use bare names
 		// Both pass through ParseCommand correctly

@@ -86,6 +86,7 @@ func (a *Adapter) Start() error {
 			{Command: "sessions", Description: "List all active agent sessions"},
 			{Command: "info", Description: "Show current chat session details"},
 			{Command: "reset", Description: "Reset the current session"},
+			{Command: "resume", Description: "Attempt to restore a previous session for this chat"},
 			{Command: "setvoice", Description: "Set custom bot voice (reply to a voice message)"},
 			{Command: "voice_clear", Description: "Clear your custom voice"},
 			{Command: "voicemode", Description: "Set voice mode: echo or default"},
