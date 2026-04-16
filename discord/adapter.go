@@ -72,3 +72,10 @@ func (a *Adapter) Stop() error {
 	slog.Info("stopping discord adapter")
 	return a.session.Close()
 }
+
+// Healthy reports whether the Discord gateway connection is alive.
+// discordgo manages its own WebSocket reconnect, so this mostly reflects
+// whether the initial handshake succeeded and the session hasn't been closed.
+func (a *Adapter) Healthy() bool {
+	return a.session.DataReady
+}

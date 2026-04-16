@@ -41,6 +41,29 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 }
 
+func TestHealthEndpoint_Degraded(t *testing.T) {
+	pool := newTestPool()
+	unhealthy := func() bool { return false }
+	srv := New(":0", pool, unhealthy)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+
+	var resp healthResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+
+	if resp.Status != "degraded" {
+		t.Errorf("expected status=degraded, got %q", resp.Status)
+	}
+}
+
 func TestListSessionsEndpoint_Empty(t *testing.T) {
 	pool := newTestPool()
 	srv := New(":0", pool)

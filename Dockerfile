@@ -61,6 +61,6 @@ COPY --from=builder --chown=agent:agent /build/quill /usr/local/bin/quill
 
 USER agent
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD pgrep -x quill || exit 1
+  CMD curl -sf http://localhost:8080/api/health || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "quill"]
 CMD ["/etc/quill/config.toml"]

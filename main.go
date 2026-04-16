@@ -100,6 +100,7 @@ func main() {
 
 	// Build platforms
 	var platforms []platform.Platform
+	var healthChecks []api.HealthCheck
 
 	if cfg.Discord.Enabled {
 		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, voiceStore, cfg.TTS, cfg.Markdown)
@@ -108,6 +109,7 @@ func main() {
 			os.Exit(1)
 		}
 		platforms = append(platforms, adapter)
+		healthChecks = append(healthChecks, adapter.Healthy)
 		slog.Info("discord adapter registered",
 			"channels", cfg.Discord.AllowedChannels,
 			"allowed_user_id", cfg.Discord.AllowedUserIDs)
@@ -120,6 +122,7 @@ func main() {
 			os.Exit(1)
 		}
 		platforms = append(platforms, adapter)
+		healthChecks = append(healthChecks, adapter.Healthy)
 		slog.Info("telegram adapter registered",
 			"allowed_chats", cfg.Telegram.AllowedChats,
 			"allowed_user_id", cfg.Telegram.AllowedUserIDs)
@@ -130,7 +133,7 @@ func main() {
 	// Start HTTP API server (optional)
 	var apiServer *api.Server
 	if cfg.API.Enabled && cfg.API.Listen != "" {
-		apiServer = api.New(cfg.API.Listen, pool)
+		apiServer = api.New(cfg.API.Listen, pool, healthChecks...)
 		if err := apiServer.Start(); err != nil {
 			slog.Error("failed to start api server", "error", err)
 			os.Exit(1)
