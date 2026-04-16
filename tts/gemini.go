@@ -68,6 +68,11 @@ func (g *GeminiSynthesizer) Synthesize(text string) (string, error) {
 
 	text = g.applyStyleTags(text)
 
+	// Prepend style/instructions to the text (TTS models don't support SystemInstruction)
+	if sysInst := g.buildSystemInstruction(); sysInst != "" {
+		text = sysInst + "\n\n" + text
+	}
+
 	contents := []*genai.Content{
 		{
 			Role: "user",
@@ -86,13 +91,6 @@ func (g *GeminiSynthesizer) Synthesize(text string) (string, error) {
 				},
 			},
 		},
-	}
-	if sysInst := g.buildSystemInstruction(); sysInst != "" {
-		config.SystemInstruction = &genai.Content{
-			Parts: []*genai.Part{
-				{Text: sysInst},
-			},
-		}
 	}
 
 	var audioData []byte
