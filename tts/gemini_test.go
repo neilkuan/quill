@@ -2,6 +2,7 @@ package tts
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,39 @@ func TestNewGeminiSynthesizer_Defaults(t *testing.T) {
 	}
 	if synth.config.TimeoutSec != 60 {
 		t.Errorf("expected default timeout 60, got %d", synth.config.TimeoutSec)
+	}
+}
+
+func TestBuildSystemInstruction(t *testing.T) {
+	tests := []struct {
+		name         string
+		style        string
+		instructions string
+		wantContains string
+		wantEmpty    bool
+	}{
+		{name: "no style no instructions", wantEmpty: true},
+		{name: "style only", style: "whisper", wantContains: "intimate, breathy whisper"},
+		{name: "instructions only", instructions: "Be cheerful", wantContains: "Be cheerful"},
+		{name: "both combined", style: "newscaster", instructions: "Use short sentences", wantContains: "professional"},
+		{name: "unknown style ignored", style: "unknown", instructions: "Custom", wantContains: "Custom"},
+		{name: "case insensitive", style: "Vocal_Smile", wantContains: "bright, sunny"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &GeminiSynthesizer{config: GeminiConfig{
+				Style:        tt.style,
+				Instructions: tt.instructions,
+			}}
+			got := g.buildSystemInstruction()
+			if tt.wantEmpty && got != "" {
+				t.Errorf("expected empty, got %q", got)
+			}
+			if tt.wantContains != "" && !strings.Contains(strings.ToLower(got), strings.ToLower(tt.wantContains)) {
+				t.Errorf("expected to contain %q, got %q", tt.wantContains, got)
+			}
+		})
 	}
 }
 

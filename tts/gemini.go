@@ -19,9 +19,20 @@ type GeminiConfig struct {
 	Model        string // default: "gemini-3.1-flash-tts-preview"
 	Voice        string // prebuilt voice name (default: "Kore")
 	Instructions string // Voice style/tone instructions (used as system instruction)
+	Style        string // Predefined voice style: vocal_smile, newscaster, whisper, empathetic, promo_hype, deadpan
 	StylePrefix  string // Emotion tag prepended to each line, e.g. "[shy]"
 	StyleSuffix  string // Emotion tag appended to each line, e.g. "[laughs softly]"
 	TimeoutSec   int
+}
+
+// voiceStyles maps predefined style names to their system instruction descriptions.
+var voiceStyles = map[string]string{
+	"vocal_smile": `Use "Vocal Smile" technique: raise the soft palate to keep the tone bright, sunny, and explicitly inviting.`,
+	"newscaster":  `Speak in a professional, authoritative manner with clear articulation and standard broadcast cadence.`,
+	"whisper":     `Speak in an intimate, breathy whisper with a close-to-mic proximity effect.`,
+	"empathetic":  `Speak in a warm, understanding, soft tone with gentle inflections.`,
+	"promo_hype":  `Speak with high energy, punchy consonants, and elongated vowels on excitement words.`,
+	"deadpan":     `Speak with flat affect, minimal pitch variation, and dry delivery.`,
 }
 
 // GeminiSynthesizer uses the Google Gemini API for text-to-speech.
@@ -76,10 +87,10 @@ func (g *GeminiSynthesizer) Synthesize(text string) (string, error) {
 			},
 		},
 	}
-	if g.config.Instructions != "" {
+	if sysInst := g.buildSystemInstruction(); sysInst != "" {
 		config.SystemInstruction = &genai.Content{
 			Parts: []*genai.Part{
-				{Text: g.config.Instructions},
+				{Text: sysInst},
 			},
 		}
 	}
@@ -120,6 +131,18 @@ func (g *GeminiSynthesizer) Synthesize(text string) (string, error) {
 	}
 
 	return localPath, nil
+}
+
+// buildSystemInstruction combines the predefined style and custom instructions.
+func (g *GeminiSynthesizer) buildSystemInstruction() string {
+	var parts []string
+	if desc, ok := voiceStyles[strings.ToLower(g.config.Style)]; ok {
+		parts = append(parts, desc)
+	}
+	if g.config.Instructions != "" {
+		parts = append(parts, g.config.Instructions)
+	}
+	return strings.Join(parts, " ")
 }
 
 // applyStyleTags wraps each non-empty line with prefix/suffix emotion tags.

@@ -135,7 +135,8 @@ session_ttl_hours = 24
 # api_key = "${GEMINI_API_KEY}"
 # model = "gemini-3.1-flash-tts-preview"   # or gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts
 # voice = "Kore"               # Kore (Firm, Middle pitch)
-# instructions = ""            # tone/style system instruction, e.g. "Speak in a cheerful and friendly tone"
+# style = "vocal_smile"        # vocal_smile, newscaster, whisper, empathetic, promo_hype, deadpan
+# instructions = ""            # custom tone/style instruction (combined with style if both set)
 # style_prefix = "[shy]"       # emotion tag prepended to each line (Gemini only)
 # style_suffix = "[laughs softly]"  # emotion tag appended to each line (Gemini only)
 

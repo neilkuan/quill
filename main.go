@@ -98,6 +98,7 @@ func main() {
 				Model:        cfg.TTS.Model,
 				Voice:        cfg.TTS.Voice,
 				Instructions: cfg.TTS.Instructions,
+				Style:        cfg.TTS.Style,
 				StylePrefix:  cfg.TTS.StylePrefix,
 				StyleSuffix:  cfg.TTS.StyleSuffix,
 				TimeoutSec:   cfg.TTS.TimeoutSec,
