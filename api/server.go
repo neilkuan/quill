@@ -13,9 +13,13 @@ import (
 
 var startTime = time.Now()
 
+// HealthCheck returns true when the component is healthy.
+type HealthCheck func() bool
+
 type Server struct {
-	pool   *acp.SessionPool
-	server *http.Server
+	pool         *acp.SessionPool
+	server       *http.Server
+	healthChecks []HealthCheck
 }
 
 type healthResponse struct {
@@ -26,8 +30,8 @@ type healthResponse struct {
 	Timestamp      time.Time `json:"timestamp"`
 }
 
-func New(listenAddr string, pool *acp.SessionPool) *Server {
-	s := &Server{pool: pool}
+func New(listenAddr string, pool *acp.SessionPool, checks ...HealthCheck) *Server {
+	s := &Server{pool: pool, healthChecks: checks}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
@@ -85,8 +89,19 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	active, max := s.pool.Stats()
-	writeJSON(w, http.StatusOK, healthResponse{
-		Status:         "ok",
+
+	status := "ok"
+	httpStatus := http.StatusOK
+	for _, check := range s.healthChecks {
+		if !check() {
+			status = "degraded"
+			httpStatus = http.StatusServiceUnavailable
+			break
+		}
+	}
+
+	writeJSON(w, httpStatus, healthResponse{
+		Status:         status,
 		Uptime:         time.Since(startTime).Truncate(time.Second).String(),
 		ActiveSessions: active,
 		MaxSessions:    max,
