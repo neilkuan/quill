@@ -16,7 +16,7 @@ type Adapter struct {
 	session *discordgo.Session
 }
 
-func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, voiceStore *tts.VoiceStore, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig) (*Adapter, error) {
+func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig) (*Adapter, error) {
 	dg, err := discordgo.New("Bot " + cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,6 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 		ReactionsConfig:  cfg.Reactions,
 		Transcriber:      transcriber,
 		Synthesizer:      synthesizer,
-		VoiceStore:       voiceStore,
 		TTSConfig:        ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
 	}

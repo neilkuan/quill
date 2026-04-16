@@ -33,7 +33,6 @@ type Handler struct {
 	ReactionsConfig config.ReactionsConfig
 	Transcriber     stt.Transcriber
 	Synthesizer     tts.Synthesizer
-	VoiceStore      *tts.VoiceStore
 	TTSConfig       config.TTSConfig
 	// MarkdownTableMode controls how GFM tables in agent replies are rewritten
 	// before being sent to Discord. See markdown.TableMode for options.
@@ -235,22 +234,6 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 					}
 					slog.Debug("downloaded audio", "filename", att.Filename, "path", localPath)
 
-					// Handle "setvoice" command: create custom voice via OpenAI API
-					if strings.EqualFold(strings.TrimSpace(prompt), "setvoice") && h.VoiceStore != nil && h.Synthesizer != nil {
-						voiceID, createErr := h.Synthesizer.CreateVoice(m.Author.Username, localPath)
-						os.Remove(localPath)
-						if createErr != nil {
-							s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Failed to create voice: %v", createErr))
-						} else {
-							if sErr := h.VoiceStore.SetVoice(m.Author.ID, voiceID); sErr != nil {
-								s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Voice created but failed to save: %v", sErr))
-							} else {
-								s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Your custom voice has been created! (ID: `%s`)", voiceID))
-							}
-						}
-						return
-					}
-
 					slog.Info("🎙️ stt: transcribing voice message", "filename", att.Filename, "user", m.Author.Username)
 					text, err := h.Transcriber.Transcribe(localPath)
 					if removeErr := os.Remove(localPath); removeErr != nil {
@@ -421,30 +404,6 @@ var slashCommands = []*discordgo.ApplicationCommand{
 		Name:        "resume",
 		Description: "Attempt to restore a previous session for this thread",
 	},
-	{
-		Name:        "setvoice",
-		Description: "Set your custom bot voice (attach a 3-10s audio file)",
-	},
-	{
-		Name:        "voice-clear",
-		Description: "Clear your custom voice, revert to default",
-	},
-	{
-		Name:        "voicemode",
-		Description: "Set voice reply mode: echo (use your voice) or default",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "mode",
-				Description: "echo = bot uses your voice, default = normal",
-				Required:    true,
-				Choices: []*discordgo.ApplicationCommandOptionChoice{
-					{Name: "echo", Value: "echo"},
-					{Name: "default", Value: "default"},
-				},
-			},
-		},
-	},
 }
 
 func (h *Handler) registerSlashCommands(s *discordgo.Session, appID string) {
@@ -483,18 +442,6 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	case command.CmdResume:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteResume(h.Pool, threadKey)
-	case command.CmdSetVoice:
-		response = h.handleSetVoice(s, i, userID)
-	case command.CmdVoiceClear:
-		response = h.handleVoiceClear(userID)
-	case command.CmdVoiceMode:
-		mode := ""
-		for _, opt := range data.Options {
-			if opt.Name == "mode" {
-				mode = opt.StringValue()
-			}
-		}
-		response = h.handleVoiceMode(userID, mode)
 	default:
 		return
 	}
@@ -726,63 +673,10 @@ func getOrCreateThread(s *discordgo.Session, msg *discordgo.Message, prompt stri
 	return thread.ID, nil
 }
 
-// --- Voice command handlers ---
-
-func (h *Handler) handleSetVoice(s *discordgo.Session, i *discordgo.InteractionCreate, userID string) string {
-	if h.VoiceStore == nil || h.Synthesizer == nil {
-		return "TTS is not configured."
-	}
-
-	// Discord slash commands don't natively support file attachments.
-	// Guide the user to send audio + "setvoice" as a regular message.
-	return "To set your voice: send a voice/audio message with the text `setvoice`.\n" +
-		"The bot will upload it to OpenAI and create your custom voice."
-}
-
-func (h *Handler) handleVoiceClear(userID string) string {
-	if h.VoiceStore == nil {
-		return "TTS is not configured."
-	}
-	if err := h.VoiceStore.RemoveVoice(userID); err != nil {
-		return fmt.Sprintf("Failed to clear voice: %v", err)
-	}
-	return "Your custom voice has been cleared. Bot will use the default voice."
-}
-
-func (h *Handler) handleVoiceMode(userID, mode string) string {
-	if h.VoiceStore == nil {
-		return "TTS is not configured."
-	}
-	switch mode {
-	case "echo":
-		h.VoiceStore.SetEchoMode(userID, true)
-		return "Voice mode set to **echo** — bot will reply using your voice."
-	case "default":
-		h.VoiceStore.SetEchoMode(userID, false)
-		return "Voice mode set to **default** — bot will use the configured voice."
-	default:
-		return "Unknown mode. Use `echo` or `default`."
-	}
-}
-
 // sendVoiceReply synthesizes and sends a voice message.
-// Uses per-user custom voice if set, otherwise default voice.
 func (h *Handler) sendVoiceReply(s *discordgo.Session, channelID, userID, text string) {
-	var audioPath string
-	var err error
-
-	// Priority: per-user custom voice → default configured voice
-	voice := h.TTSConfig.Voice
-	if h.VoiceStore != nil {
-		if voiceID := h.VoiceStore.GetVoice(userID); voiceID != "" {
-			voice = voiceID
-			audioPath, err = h.Synthesizer.SynthesizeWithVoice(text, voiceID)
-		}
-	}
-	if audioPath == "" && err == nil {
-		audioPath, err = h.Synthesizer.Synthesize(text)
-	}
-	slog.Info("🔊 tts: synthesizing voice reply", "user", userID, "voice", voice, "text_length", len(text))
+	slog.Info("🔊 tts: synthesizing voice reply", "user", userID, "voice", h.TTSConfig.Voice, "text_length", len(text))
+	audioPath, err := h.Synthesizer.Synthesize(text)
 	if err != nil {
 		slog.Error("tts synthesis failed", "error", err)
 		return
@@ -810,9 +704,6 @@ func (h *Handler) buildVoiceInfo(userID string) *command.VoiceInfo {
 	}
 	if h.Transcriber != nil {
 		vi.STTProvider = "openai"
-	}
-	if h.VoiceStore != nil && userID != "" {
-		vi.CustomVoice = h.VoiceStore.GetVoice(userID)
 	}
 	return vi
 }
