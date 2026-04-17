@@ -1,49 +1,52 @@
+{{- range $name, $inst := .Values.instances }}
+{{- if $inst.enabled }}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "quill.fullname" . }}-config
+  name: {{ include "quill.fullname" $ }}-{{ $name }}-config
   labels:
-    {{- include "quill.labels" . | nindent 4 }}
+    {{- include "quill.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
 data:
   config.toml: |
-    {{- if .Values.teams.enabled }}
+    {{- if $inst.teams.enabled }}
     [teams]
     app_id = "${TEAMS_APP_ID}"
     app_secret = "${TEAMS_APP_SECRET}"
     tenant_id = "${TEAMS_TENANT_ID}"
-    listen = {{ .Values.teams.listen | quote }}
-    {{- with .Values.teams.allowedUserIds }}
-    allowed_user_id = {{ toJson . }}
-    {{- end }}
+    listen = {{ $inst.teams.listen | quote }}
     {{- end }}
 
-    {{- if .Values.discord.enabled }}
+    {{- if $inst.discord.enabled }}
     [discord]
     bot_token = "${DISCORD_BOT_TOKEN}"
-    {{- with .Values.discord.allowedChannels }}
+    {{- with $inst.discord.allowedChannels }}
     allowed_channels = {{ toJson . }}
     {{- end }}
     {{- end }}
 
-    {{- if .Values.telegram.enabled }}
+    {{- if $inst.telegram.enabled }}
     [telegram]
     bot_token = "${TELEGRAM_BOT_TOKEN}"
-    {{- with .Values.telegram.allowedChats }}
+    {{- with $inst.telegram.allowedChats }}
     allowed_chats = {{ toJson . }}
     {{- end }}
     {{- end }}
 
     [agent]
-    command = {{ .Values.agent.command | quote }}
-    args = {{ toJson .Values.agent.args }}
-    working_dir = {{ .Values.agent.workingDir | quote }}
+    command = {{ $inst.agent.command | quote }}
+    args = {{ toJson $inst.agent.args }}
+    working_dir = {{ $inst.agent.workingDir | quote }}
 
     [pool]
-    max_sessions = {{ .Values.pool.maxSessions }}
-    session_ttl_hours = {{ .Values.pool.sessionTTLHours }}
+    max_sessions = {{ $.Values.pool.maxSessions }}
+    session_ttl_hours = {{ $.Values.pool.sessionTTLHours }}
 
-    {{- if .Values.api.enabled }}
+    {{- if $.Values.api.enabled }}
     [api]
     enabled = true
-    listen = {{ .Values.api.listen | quote }}
+    listen = {{ $.Values.api.listen | quote }}
     {{- end }}
+{{- end }}
+{{- end }}

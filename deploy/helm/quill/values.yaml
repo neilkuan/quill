@@ -1,61 +1,85 @@
-replicaCount: 1
+# Each instance gets its own Deployment, Service, ConfigMap, and Secret.
+# Ingress is shared — all instances route through a single ALB.
+instances:
+  kiro:
+    enabled: true
+    image:
+      repository: ghcr.io/neilkuan/quill
+      tag: ""  # defaults to appVersion
+      pullPolicy: IfNotPresent
+    agent:
+      command: kiro-cli
+      args: ["acp", "--trust-all-tools"]
+      workingDir: /home/agent
+      logLevel: info
+    secrets:
+      TEAMS_APP_ID: ""
+      TEAMS_APP_SECRET: ""
+      TEAMS_TENANT_ID: ""
+      DISCORD_BOT_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      OPENAI_API_KEY: ""
+      GEMINI_API_KEY: ""
+    teams:
+      enabled: true
+      listen: ":3978"
+    discord:
+      enabled: false
+      allowedChannels: []
+    telegram:
+      enabled: false
+      allowedChats: []
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
 
-image:
-  repository: ghcr.io/neilkuan/quill
-  tag: ""  # defaults to appVersion
-  pullPolicy: IfNotPresent
+  # -- Example: uncomment to deploy Claude alongside Kiro
+  # claude:
+  #   enabled: false
+  #   image:
+  #     repository: ghcr.io/neilkuan/quill-claude
+  #     tag: ""
+  #     pullPolicy: IfNotPresent
+  #   agent:
+  #     command: claude-agent-acp
+  #     args: []
+  #     workingDir: /home/node
+  #     logLevel: info
+  #   secrets:
+  #     DISCORD_BOT_TOKEN: ""
+  #     ANTHROPIC_API_KEY: ""
+  #   teams:
+  #     enabled: false
+  #   discord:
+  #     enabled: true
+  #     allowedChannels: ["1234567890"]
+  #   telegram:
+  #     enabled: false
+  #     allowedChats: []
+  #   resources:
+  #     requests:
+  #       cpu: 250m
+  #       memory: 256Mi
+  #     limits:
+  #       cpu: "1"
+  #       memory: 512Mi
 
-# -- Agent configuration
-agent:
-  command: kiro-cli
-  args: ["acp", "--trust-all-tools"]
-  workingDir: /home/agent
-  logLevel: info
-
+# -- Shared settings
 pool:
   maxSessions: 10
   sessionTTLHours: 24
 
-# -- Platform tokens (injected as Secret → env vars)
-secrets:
-  # Teams (required for EKS deployment)
-  TEAMS_APP_ID: ""
-  TEAMS_APP_SECRET: ""
-  TEAMS_TENANT_ID: ""
-  # Discord (optional)
-  DISCORD_BOT_TOKEN: ""
-  # Telegram (optional)
-  TELEGRAM_BOT_TOKEN: ""
-  # STT / TTS (optional)
-  OPENAI_API_KEY: ""
-  GEMINI_API_KEY: ""
-
-# -- Teams adapter
-teams:
-  enabled: true
-  listen: ":3978"
-  # allowedUserIds: ["*"]
-
-# -- Discord adapter (optional)
-discord:
-  enabled: false
-  allowedChannels: []
-
-# -- Telegram adapter (optional)
-telegram:
-  enabled: false
-  allowedChats: []
-
-# -- Health / monitoring API
 api:
   enabled: true
   listen: ":8080"
 
-# -- Service
 service:
   type: NodePort
 
-# -- Ingress (ALB)
 ingress:
   enabled: true
   className: alb
@@ -68,12 +92,4 @@ ingress:
     alb.ingress.kubernetes.io/healthcheck-port: "8080"
     alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
-  host: ""  # quill.example.com
-
-resources:
-  requests:
-    cpu: 250m
-    memory: 256Mi
-  limits:
-    cpu: "1"
-    memory: 512Mi
+  host: ""
