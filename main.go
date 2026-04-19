@@ -22,6 +22,24 @@ import (
 
 var commit = "unknown"
 
+// extractKiroAgentName returns the value of the `--agent <name>` or
+// `--agent=<name>` flag in the pool args, falling back to
+// `kiro_default` when the flag is absent (Kiro's own default binding).
+// Used only by the Kiro session picker to keep the listing to
+// loadable entries — see KiroPicker.AgentName.
+func extractKiroAgentName(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--agent" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if len(a) > len("--agent=") && a[:len("--agent=")] == "--agent=" {
+			return a[len("--agent="):]
+		}
+	}
+	return "kiro_default"
+}
+
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Printf("quill (%s)\n", commit)
@@ -119,7 +137,18 @@ func main() {
 	// message instead of crashing.
 	picker, pickerOK := sessionpicker.Detect(cfg.Agent.Command)
 	if pickerOK {
-		slog.Info("session picker enabled", "agent_type", picker.AgentType())
+		// Kiro binds each session to the agent that created it (the
+		// `--agent <name>` flag); loading a session across agents
+		// returns Internal error. Filter the listing to the currently
+		// configured agent so users only see entries that will load.
+		if kp, isKiro := picker.(*sessionpicker.KiroPicker); isKiro {
+			kp.AgentName = extractKiroAgentName(cfg.Agent.Args)
+			slog.Info("session picker enabled",
+				"agent_type", picker.AgentType(),
+				"filter_agent_name", kp.AgentName)
+		} else {
+			slog.Info("session picker enabled", "agent_type", picker.AgentType())
+		}
 	} else {
 		slog.Info("session picker not available for this agent", "agent_cmd", cfg.Agent.Command)
 	}

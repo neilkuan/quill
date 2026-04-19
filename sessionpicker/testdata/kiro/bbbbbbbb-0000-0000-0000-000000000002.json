@@ -3,5 +3,8 @@
   "cwd": "/home/test/proj-b",
   "created_at": "2026-04-15T10:00:00Z",
   "updated_at": "2026-04-18T09:00:00Z",
-  "title": "middle session"
+  "title": "middle session",
+  "session_state": {
+    "agent_name": "openab-go"
+  }
 }

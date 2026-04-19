@@ -12,44 +12,76 @@ import (
 	"time"
 )
 
-// quillEnvelopeTags are the XML-ish wrappers quill prepends to user
-// prompts before sending them to the agent (e.g. sender metadata,
-// voice-transcription decorations). When these end up as the first
-// characters of a prompt, agents that derive a title by truncating
-// the prompt save a useless "<sender_context>" or similar as the
-// session title.
-var quillEnvelopeTags = []string{"sender_context", "voice_transcription"}
+// quillMetadataTags are pure metadata wrappers quill prepends to user
+// prompts. Their contents are never what a human typed — strip
+// them whole when cleaning up a title candidate.
+var quillMetadataTags = []string{"sender_context", "attached_files"}
 
-// stripQuillEnvelope peels off any quill envelope at the very start
-// of s, then repeats in case envelopes stack (e.g. voice transcription
-// wrapped around a sender context). Envelopes that appear mid-string
-// — or unrelated XML-ish content — are left untouched, so a user
-// message that merely mentions `<sender_context>` in prose survives.
+// stripQuillEnvelope extracts the text a human would recognise as
+// the "real" message from a prompt quill injected metadata into.
+//
+// Algorithm:
+//  1. Peel off any leading metadata envelopes (sender_context,
+//     attached_files) and their enclosing whitespace.
+//  2. If the resulting text starts with <voice_transcription>,
+//     unwrap it and return just the transcribed utterance — discard
+//     quill's trailing "The above is a transcription…" hint, which
+//     is prompt guidance for the agent, not what the user said.
+//  3. Otherwise return the stripped remainder verbatim.
+//
+// Envelopes that appear mid-string are left untouched, so a user
+// message that merely mentions <sender_context> in prose survives.
 func stripQuillEnvelope(s string) string {
+	// Repeatedly peel leading metadata envelopes in case they stack.
 	for {
-		next := stripOneEnvelope(s)
+		next := stripOneMetadataEnvelope(s)
 		if next == s {
-			return s
+			break
 		}
 		s = next
 	}
+
+	if inner, ok := unwrapVoiceTranscription(s); ok {
+		return inner
+	}
+	return s
 }
 
-func stripOneEnvelope(s string) string {
+func stripOneMetadataEnvelope(s string) string {
 	t := strings.TrimLeft(s, " \t\r\n")
-	for _, tag := range quillEnvelopeTags {
+	for _, tag := range quillMetadataTags {
 		open := "<" + tag + ">"
-		close := "</" + tag + ">"
+		closeTag := "</" + tag + ">"
 		if !strings.HasPrefix(t, open) {
 			continue
 		}
-		end := strings.Index(t, close)
+		end := strings.Index(t, closeTag)
 		if end < 0 {
 			continue
 		}
-		return strings.TrimLeft(t[end+len(close):], " \t\r\n")
+		return strings.TrimLeft(t[end+len(closeTag):], " \t\r\n")
 	}
 	return s
+}
+
+// unwrapVoiceTranscription returns the inner transcript when s starts
+// with a <voice_transcription>...</voice_transcription> block. The
+// trailing "The above is a transcription of the user's voice message"
+// hint quill appends after the closing tag is dropped because it is
+// agent guidance, not user speech.
+func unwrapVoiceTranscription(s string) (string, bool) {
+	const open = "<voice_transcription>"
+	const closeTag = "</voice_transcription>"
+	t := strings.TrimLeft(s, " \t\r\n")
+	if !strings.HasPrefix(t, open) {
+		return "", false
+	}
+	rest := t[len(open):]
+	end := strings.Index(rest, closeTag)
+	if end < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[:end]), true
 }
 
 // Session is the minimal metadata needed to render a picker row and

@@ -21,6 +21,14 @@ type KiroPicker struct {
 	// BaseDir overrides the default ~/.kiro/sessions/cli path. Mainly
 	// for tests; leave empty in production.
 	BaseDir string
+
+	// AgentName, when non-empty, restricts List results to sessions
+	// whose stored `agent_name` matches. Kiro binds each session to the
+	// agent that created it and refuses `session/load` across agent
+	// boundaries (returns Internal error), so listing mismatched
+	// sessions in the picker would only produce unloadable entries.
+	// Leave empty to show every session regardless of agent.
+	AgentName string
 }
 
 // NewKiroPicker returns a picker that reads sessions from baseDir, or
@@ -34,11 +42,19 @@ func (k *KiroPicker) AgentType() string { return "kiro-cli" }
 // kiroSessionFile mirrors the fields in ~/.kiro/sessions/cli/<uuid>.json
 // that the picker cares about. Extra fields in the file are ignored.
 type kiroSessionFile struct {
-	SessionID string    `json:"session_id"`
-	CWD       string    `json:"cwd"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	SessionID    string            `json:"session_id"`
+	CWD          string            `json:"cwd"`
+	Title        string            `json:"title"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	SessionState kiroSessionStateF `json:"session_state"`
+}
+
+type kiroSessionStateF struct {
+	// AgentName is the agent binding Kiro stored for this session.
+	// Empty / absent means the session was created with Kiro's default
+	// agent (which Kiro itself labels `kiro_default`).
+	AgentName string `json:"agent_name"`
 }
 
 func (k *KiroPicker) dir() (string, error) {
@@ -72,11 +88,14 @@ func (k *KiroPicker) List(cwd string, limit int) ([]Session, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		s, ok := loadKiroSession(path)
+		s, meta, ok := loadKiroSession(path)
 		if !ok {
 			continue
 		}
 		if cwd != "" && s.CWD != cwd {
+			continue
+		}
+		if k.AgentName != "" && !kiroAgentMatches(meta.AgentName, k.AgentName) {
 			continue
 		}
 		sessions = append(sessions, s)
@@ -92,19 +111,38 @@ func (k *KiroPicker) List(cwd string, limit int) ([]Session, error) {
 	return sessions, nil
 }
 
-func loadKiroSession(path string) (Session, bool) {
+// kiroMeta surfaces Kiro-specific fields that the picker wants for
+// filtering but does not expose through the cross-agent Session struct.
+type kiroMeta struct {
+	AgentName string
+}
+
+// kiroAgentMatches decides whether a session's stored agent_name is
+// acceptable for a picker configured with wantAgent. The empty /
+// missing stored value is treated as `kiro_default` — Kiro's
+// unparameterised default — so picker configs that explicitly target
+// the default still match legacy sessions that never recorded an
+// agent_name.
+func kiroAgentMatches(storedAgent, wantAgent string) bool {
+	if storedAgent == "" {
+		storedAgent = "kiro_default"
+	}
+	return storedAgent == wantAgent
+}
+
+func loadKiroSession(path string) (Session, kiroMeta, bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		slog.Warn("kiro picker: read session file failed", "path", path, "err", err)
-		return Session{}, false
+		return Session{}, kiroMeta{}, false
 	}
 	var f kiroSessionFile
 	if err := json.Unmarshal(raw, &f); err != nil {
 		slog.Warn("kiro picker: parse session file failed", "path", path, "err", err)
-		return Session{}, false
+		return Session{}, kiroMeta{}, false
 	}
 	if f.SessionID == "" {
-		return Session{}, false
+		return Session{}, kiroMeta{}, false
 	}
 	updated := f.UpdatedAt
 	if updated.IsZero() {
@@ -127,7 +165,7 @@ func loadKiroSession(path string) (Session, bool) {
 		Title:     title,
 		CWD:       f.CWD,
 		UpdatedAt: updated,
-	}, true
+	}, kiroMeta{AgentName: f.SessionState.AgentName}, true
 }
 
 // looksLikeTruncatedSenderContext catches cases where Kiro only stored
