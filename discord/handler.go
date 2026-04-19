@@ -610,8 +610,17 @@ func streamPrompt(
 			if notification.ID != nil {
 				if notification.Error != nil {
 					promptErr = notification.Error
-				} else if acp.StopReason(notification) == "cancelled" {
-					cancelled = true
+				} else {
+					reason := acp.StopReason(notification)
+					if reason == "cancelled" {
+						cancelled = true
+					}
+					if reason != "" {
+						slog.Info("acp: prompt completed",
+							"thread_key", conn.ThreadKey,
+							"session_id", conn.SessionID,
+							"stop_reason", reason)
+					}
 				}
 				break
 			}
