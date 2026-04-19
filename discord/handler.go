@@ -37,6 +37,38 @@ type Handler struct {
 	// MarkdownTableMode controls how GFM tables in agent replies are rewritten
 	// before being sent to Discord. See markdown.TableMode for options.
 	MarkdownTableMode markdown.TableMode
+
+	// streamingMu guards streamingMsgs.
+	streamingMu sync.Mutex
+	// streamingMsgs maps a bot streaming message ID to the thread key whose
+	// current prompt should be cancelled when the user taps the 🛑 reaction
+	// on that message. Entries are added just before SessionPrompt and
+	// cleared when the prompt completes.
+	streamingMsgs map[string]string
+}
+
+// registerStreamingMsg records a bot streaming message ID so reaction-triggered
+// cancels can find the owning thread.
+func (h *Handler) registerStreamingMsg(msgID, threadKey string) {
+	h.streamingMu.Lock()
+	defer h.streamingMu.Unlock()
+	if h.streamingMsgs == nil {
+		h.streamingMsgs = make(map[string]string)
+	}
+	h.streamingMsgs[msgID] = threadKey
+}
+
+func (h *Handler) unregisterStreamingMsg(msgID string) {
+	h.streamingMu.Lock()
+	defer h.streamingMu.Unlock()
+	delete(h.streamingMsgs, msgID)
+}
+
+func (h *Handler) lookupStreamingMsg(msgID string) (string, bool) {
+	h.streamingMu.Lock()
+	defer h.streamingMu.Unlock()
+	threadKey, ok := h.streamingMsgs[msgID]
+	return threadKey, ok
 }
 
 func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -319,7 +351,18 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	)
 	reactions.SetQueued()
 
-	finalText, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
+	// Track the streaming message so 🛑 reactions can be mapped to the right
+	// thread. Also drop an initial 🛑 reaction on the bot's message so users
+	// can tap-to-cancel without typing.
+	h.registerStreamingMsg(thinkingMsg.ID, threadKey)
+	go func() {
+		if err := s.MessageReactionAdd(threadID, thinkingMsg.ID, "🛑"); err != nil {
+			slog.Debug("failed to add cancel reaction", "error", err)
+		}
+	}()
+	defer h.unregisterStreamingMsg(thinkingMsg.ID)
+
+	finalText, cancelled, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
 
 	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
@@ -333,14 +376,18 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	if result == nil {
+	switch {
+	case cancelled:
+		reactions.SetCancelled()
+	case result == nil:
 		reactions.SetDone()
-	} else {
+	default:
 		reactions.SetError()
 	}
 
 	// TTS: synthesize voice reply only when the user sent a voice message
-	if result == nil && h.Synthesizer != nil && finalText != "" && hasAudio {
+	// (skip if cancelled — the text is partial).
+	if result == nil && !cancelled && h.Synthesizer != nil && finalText != "" && hasAudio {
 		go h.sendVoiceReply(s, threadID, m.Author.ID, finalText)
 	}
 
@@ -386,6 +433,27 @@ func (h *Handler) OnResumed(s *discordgo.Session, r *discordgo.Resumed) {
 	slog.Info("🔄 discord gateway resumed")
 }
 
+// OnMessageReactionAdd fires when any user adds a reaction. When the
+// reaction is 🛑 on one of our currently-streaming bot messages, route
+// it to CancelSession for the owning thread. The bot's own initial 🛑
+// reaction is ignored via the author check.
+func (h *Handler) OnMessageReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
+	if s.State.User != nil && r.UserID == s.State.User.ID {
+		return
+	}
+	if r.Emoji.Name != "🛑" {
+		return
+	}
+	threadKey, ok := h.lookupStreamingMsg(r.MessageID)
+	if !ok {
+		return
+	}
+	slog.Info("discord cancel via reaction", "user_id", r.UserID, "message_id", r.MessageID, "thread_key", threadKey)
+	if err := h.Pool.CancelSession(threadKey); err != nil {
+		slog.Debug("cancel via reaction failed", "thread_key", threadKey, "error", err)
+	}
+}
+
 // slashCommands defines the Discord Application Commands to register.
 var slashCommands = []*discordgo.ApplicationCommand{
 	{
@@ -403,6 +471,10 @@ var slashCommands = []*discordgo.ApplicationCommand{
 	{
 		Name:        "resume",
 		Description: "Attempt to restore a previous session for this thread",
+	},
+	{
+		Name:        "stop",
+		Description: "Interrupt the agent's current reply (session kept alive)",
 	},
 }
 
@@ -442,6 +514,9 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	case command.CmdResume:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteResume(h.Pool, threadKey)
+	case command.CmdStop:
+		threadKey := buildSessionKey(i.ChannelID)
+		response = command.ExecuteStop(h.Pool, threadKey)
 	default:
 		return
 	}
@@ -464,8 +539,9 @@ func streamPrompt(
 	reactions *StatusReactionController,
 	tableMode markdown.TableMode,
 	toolDisplay string,
-) (string, error) {
+) (string, bool, error) {
 	var finalText string
+	var cancelled bool
 	err := pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
 		rx, _, reset, resumed, err := conn.SessionPrompt(content)
 		if err != nil {
@@ -525,6 +601,8 @@ func streamPrompt(
 			if notification.ID != nil {
 				if notification.Error != nil {
 					promptErr = notification.Error
+				} else if acp.StopReason(notification) == "cancelled" {
+					cancelled = true
 				}
 				break
 			}
@@ -599,7 +677,13 @@ func streamPrompt(
 		finalText = textBuf.String()
 		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
-			finalContent = "_(no response)_"
+			if cancelled {
+				finalContent = "🛑 _已取消_"
+			} else {
+				finalContent = "_(no response)_"
+			}
+		} else if cancelled {
+			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
 		// Rewrite GFM tables before splitting — Discord ignores table syntax,
 		// so we wrap them in fenced code blocks (or convert to bullets) for
@@ -617,7 +701,7 @@ func streamPrompt(
 
 		return nil
 	})
-	return finalText, err
+	return finalText, cancelled, err
 }
 
 func buildSessionKey(threadID string) string {

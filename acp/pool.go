@@ -320,6 +320,21 @@ func (p *SessionPool) ResumeSession(threadKey string) (bool, string) {
 	return true, fmt.Sprintf("🔄 Session restored! Continuing conversation from `%s`.", oldSessionID)
 }
 
+// CancelSession sends session/cancel to the agent for a specific thread.
+// Unlike KillSession, this preserves the connection and session ID — the
+// agent stops the active prompt and the pending session/prompt response
+// returns with stopReason="cancelled".
+// Returns an error if no connection exists for the thread.
+func (p *SessionPool) CancelSession(threadKey string) error {
+	p.mu.RLock()
+	conn, ok := p.connections[threadKey]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("no active session for %s", threadKey)
+	}
+	return conn.SessionCancel()
+}
+
 // Stats returns pool utilization.
 func (p *SessionPool) Stats() (active int, max int) {
 	p.mu.RLock()

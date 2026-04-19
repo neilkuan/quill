@@ -404,6 +404,30 @@ func (c *AcpConnection) PromptDone() {
 	c.promptMu.Unlock()
 }
 
+// SessionCancel sends a session/cancel notification to the agent.
+// This is a JSON-RPC notification (no id, no response); the agent stops
+// producing output for the active prompt and the pending session/prompt
+// response returns with stopReason="cancelled".
+//
+// Must be called from a goroutine distinct from the one blocked inside
+// SessionPrompt — it does NOT attempt to acquire promptMu, since the
+// prompt goroutine already holds it and releases it via PromptDone after
+// the cancelled response arrives.
+func (c *AcpConnection) SessionCancel() error {
+	if c.SessionID == "" {
+		return fmt.Errorf("no session")
+	}
+	notif := NewJsonRpcNotification("session/cancel", map[string]any{
+		"sessionId": c.SessionID,
+	})
+	data, err := json.Marshal(notif)
+	if err != nil {
+		return err
+	}
+	slog.Info("acp: sending session/cancel", "session_id", c.SessionID, "thread_key", c.ThreadKey)
+	return c.sendRaw(string(data))
+}
+
 func (c *AcpConnection) Alive() bool {
 	return c.alive.Load()
 }

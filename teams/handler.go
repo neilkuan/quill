@@ -201,7 +201,7 @@ func (h *Handler) OnMessage(activity *Activity) {
 		return
 	}
 
-	finalText, result := h.streamPrompt(
+	finalText, cancelled, result := h.streamPrompt(
 		sessionKey,
 		contentBlocks,
 		activity.ServiceURL,
@@ -221,8 +221,8 @@ func (h *Handler) OnMessage(activity *Activity) {
 		}
 	}
 
-	// TTS: synthesize voice reply only when user sent audio
-	if result == nil && h.Synthesizer != nil && finalText != "" && len(activity.Attachments) > 0 {
+	// TTS: synthesize voice reply only when user sent audio (skip if cancelled).
+	if result == nil && !cancelled && h.Synthesizer != nil && finalText != "" && len(activity.Attachments) > 0 {
 		hasAudio := false
 		for _, att := range activity.Attachments {
 			if isAudioContentType(att.ContentType) {
@@ -263,6 +263,8 @@ func (h *Handler) handleCommand(activity *Activity, cmd *command.Command) {
 		response = command.ExecuteReset(h.Pool, sessionKey)
 	case command.CmdResume:
 		response = command.ExecuteResume(h.Pool, sessionKey)
+	case command.CmdStop:
+		response = command.ExecuteStop(h.Pool, sessionKey)
 	default:
 		return
 	}
@@ -289,8 +291,9 @@ func (h *Handler) streamPrompt(
 	serviceURL string,
 	conversationID string,
 	msgID string,
-) (string, error) {
+) (string, bool, error) {
 	var finalText string
+	var cancelled bool
 	err := h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
 		rx, _, reset, resumed, err := conn.SessionPrompt(content)
 		if err != nil {
@@ -357,6 +360,8 @@ func (h *Handler) streamPrompt(
 			if notification.ID != nil {
 				if notification.Error != nil {
 					promptErr = notification.Error
+				} else if acp.StopReason(notification) == "cancelled" {
+					cancelled = true
 				}
 				break
 			}
@@ -438,7 +443,13 @@ func (h *Handler) streamPrompt(
 		finalText = textBuf.String()
 		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
-			finalContent = "_(no response)_"
+			if cancelled {
+				finalContent = "🛑 _已取消_"
+			} else {
+				finalContent = "_(no response)_"
+			}
+		} else if cancelled {
+			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
 		// Rewrite GFM tables before splitting
 		finalContent = markdown.ConvertTables(finalContent, h.MarkdownTableMode)
@@ -471,7 +482,7 @@ func (h *Handler) streamPrompt(
 
 		return nil
 	})
-	return finalText, err
+	return finalText, cancelled, err
 }
 
 // sendVoiceReply synthesizes and sends a voice message

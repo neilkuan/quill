@@ -51,13 +51,15 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 
 	dg.Identify.Intents = discordgo.IntentsGuildMessages |
 		discordgo.IntentMessageContent |
-		discordgo.IntentsGuilds
+		discordgo.IntentsGuilds |
+		discordgo.IntentsGuildMessageReactions
 
 	dg.AddHandler(h.OnMessageCreate)
 	dg.AddHandler(h.OnReady)
 	dg.AddHandler(h.OnResumed)
 	dg.AddHandler(h.OnDisconnect)
 	dg.AddHandler(h.OnInteractionCreate)
+	dg.AddHandler(h.OnMessageReactionAdd)
 
 	return &Adapter{session: dg}, nil
 }

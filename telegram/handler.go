@@ -363,7 +363,7 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	)
 	reactions.SetQueued()
 
-	finalText, result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
+	finalText, cancelled, result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
 
 	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
@@ -377,14 +377,18 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		}
 	}
 
-	if result == nil {
+	switch {
+	case cancelled:
+		reactions.SetCancelled()
+	case result == nil:
 		reactions.SetDone()
-	} else {
+	default:
 		reactions.SetError()
 	}
 
 	// TTS: synthesize voice reply only when the user sent a voice/audio message
-	if result == nil && h.Synthesizer != nil && finalText != "" && (hasVoice || hasAudio) {
+	// (skip if cancelled — the text is partial).
+	if result == nil && !cancelled && h.Synthesizer != nil && finalText != "" && (hasVoice || hasAudio) {
 		userID := fmt.Sprintf("%d", msg.From.ID)
 		go h.sendVoiceReply(ctx, b, chatID, sent.ID, userID, finalText)
 	}
@@ -406,6 +410,9 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 	case command.CmdResume:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		response = command.ExecuteResume(h.Pool, sessionKey)
+	case command.CmdStop:
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
+		response = command.ExecuteStop(h.Pool, sessionKey)
 	default:
 		return
 	}
@@ -443,8 +450,9 @@ func (h *Handler) streamPrompt(
 	msgID int,
 	threadID int,
 	reactions *StatusReactionController,
-) (string, error) {
+) (string, bool, error) {
 	var finalText string
+	var cancelled bool
 	err := h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
 		rx, _, reset, resumed, err := conn.SessionPrompt(content)
 		if err != nil {
@@ -506,6 +514,8 @@ func (h *Handler) streamPrompt(
 			if notification.ID != nil {
 				if notification.Error != nil {
 					promptErr = notification.Error
+				} else if acp.StopReason(notification) == "cancelled" {
+					cancelled = true
 				}
 				break
 			}
@@ -582,7 +592,13 @@ func (h *Handler) streamPrompt(
 		finalText = textBuf.String()
 		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
-			finalContent = "_(no response)_"
+			if cancelled {
+				finalContent = "🛑 _已取消_"
+			} else {
+				finalContent = "_(no response)_"
+			}
+		} else if cancelled {
+			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
 		// Rewrite GFM tables before splitting — Telegram Markdown v1 doesn't
 		// render table syntax, so we wrap them in fenced blocks (or convert
@@ -627,7 +643,7 @@ func (h *Handler) streamPrompt(
 
 		return nil
 	})
-	return finalText, err
+	return finalText, cancelled, err
 }
 
 // sendVoiceReply synthesizes and sends a voice message.
