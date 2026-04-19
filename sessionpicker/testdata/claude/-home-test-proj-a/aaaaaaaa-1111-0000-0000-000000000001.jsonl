@@ -1,0 +1,5 @@
+{"type":"file-history-snapshot","messageId":"ignore","snapshot":{},"isSnapshotUpdate":false}
+{"parentUuid":null,"isSidechain":false,"promptId":"p1","type":"user","isMeta":true,"cwd":"/home/test/proj-a","sessionId":"aaaaaaaa-1111-0000-0000-000000000001","timestamp":"2026-04-10T10:00:00Z","message":{"role":"user","content":"<local-command-caveat>Caveat: ...</local-command-caveat>"}}
+{"parentUuid":null,"isSidechain":false,"promptId":"p2","type":"user","cwd":"/home/test/proj-a","sessionId":"aaaaaaaa-1111-0000-0000-000000000001","timestamp":"2026-04-10T10:00:01Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+{"parentUuid":null,"isSidechain":false,"promptId":"p3","type":"user","cwd":"/home/test/proj-a","sessionId":"aaaaaaaa-1111-0000-0000-000000000001","timestamp":"2026-04-10T10:00:02Z","message":{"role":"user","content":"幫我重構這個 function"}}
+{"parentUuid":"p3","isSidechain":false,"type":"assistant","cwd":"/home/test/proj-a","sessionId":"aaaaaaaa-1111-0000-0000-000000000001","timestamp":"2026-04-10T10:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"好的"}]}}

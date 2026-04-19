@@ -40,6 +40,10 @@ func Detect(agentCommand string) (Picker, bool) {
 	switch filepath.Base(agentCommand) {
 	case "kiro-cli":
 		return NewKiroPicker(""), true
+	case "claude-agent-acp":
+		return NewClaudePicker(""), true
+	case "copilot":
+		return NewCopilotPicker(""), true
 	}
 	return nil, false
 }

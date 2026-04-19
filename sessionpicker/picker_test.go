@@ -22,10 +22,14 @@ func TestDetect(t *testing.T) {
 		wantOK  bool
 		wantTyp string
 	}{
-		{"bare binary", "kiro-cli", true, "kiro-cli"},
-		{"absolute path", "/usr/local/bin/kiro-cli", true, "kiro-cli"},
+		{"kiro bare binary", "kiro-cli", true, "kiro-cli"},
+		{"kiro absolute path", "/usr/local/bin/kiro-cli", true, "kiro-cli"},
+		{"claude", "claude-agent-acp", true, "claude-agent-acp"},
+		{"copilot", "copilot", true, "copilot"},
+		{"copilot absolute path", "/usr/local/bin/copilot", true, "copilot"},
+		{"codex not supported yet", "codex", false, ""},
+		{"codex-acp not supported yet", "codex-acp", false, ""},
 		{"unknown", "some-other-agent", false, ""},
-		{"claude not yet implemented", "claude-agent-acp", false, ""},
 		{"empty", "", false, ""},
 	}
 	for _, tc := range tests {

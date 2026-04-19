@@ -10,6 +10,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/yuin/goldmark v1.8.2
 	google.golang.org/genai v1.54.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

@@ -1,0 +1,2 @@
+{"type":"file-history-snapshot","messageId":"ignore","snapshot":{}}
+{"type":"user","cwd":"/home/test/proj-b","sessionId":"bbbbbbbb-2222-0000-0000-000000000002","timestamp":"2026-04-12T09:00:00Z","message":{"role":"user","content":[{"type":"text","text":"list block form prompt"}]}}

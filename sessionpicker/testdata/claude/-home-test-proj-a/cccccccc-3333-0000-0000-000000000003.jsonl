@@ -1,0 +1,2 @@
+not a valid json at all
+{"type":"user","cwd":"/home/test/proj-a","sessionId":"cccccccc-3333-0000-0000-000000000003","timestamp":"2026-04-15T14:00:00Z","message":{"role":"user","content":"recovered after bad first line"}}
