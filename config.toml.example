@@ -64,6 +64,19 @@ error_hold_ms = 2500
 # done_hold_ms = 1500
 # error_hold_ms = 2500
 
+# [teams]
+# app_id = "${TEAMS_APP_ID}"
+# app_secret = "${TEAMS_APP_SECRET}"
+# tenant_id = "${TEAMS_TENANT_ID}"
+# listen = ":3978"
+# allowed_channels = ["19:abc123@thread.tacv2"]
+# allowed_user_id, when set, takes precedence over allowed_channels —
+# the bot will only respond to these Teams user IDs (in any conversation).
+# Use ["*"] as a wildcard to allow any user.
+# allowed_user_id = ["29:user-object-id"]
+# allowed_user_id = ["*"]
+# tool_display = "compact"   # full | compact | none — see [discord.reactions] above
+
 [agent]
 command = "kiro-cli"
 args = ["acp", "--trust-all-tools"]

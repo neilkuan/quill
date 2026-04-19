@@ -2,7 +2,7 @@
 
 [繁體中文](README-zh-tw.md) | English
 
-A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord** and **Telegram** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot CLI](https://github.com/github/copilot-cli), and more.
+A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord**, **Telegram**, and **Microsoft Teams** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot CLI](https://github.com/github/copilot-cli), and more.
 
 This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (originally in Rust).
 
@@ -13,7 +13,8 @@ This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (origi
 - **Pluggable agent backends** — Kiro, Claude Code, Codex, GitHub Copilot (any ACP-compatible CLI)
 - **Discord integration** — @mention triggers, auto thread creation, multi-turn conversations
 - **Telegram integration** — @mention / reply-to-bot in groups, private chat, voice auto-accepted in groups, forum topic support (one session per topic)
-- **Voice message transcription** — transcribes voice messages via OpenAI Whisper API (Discord & Telegram)
+- **Microsoft Teams integration** — @mention trigger in channels, Bot Framework webhook, streaming edit responses, image/voice/file attachments
+- **Voice message transcription** — transcribes voice messages via OpenAI Whisper API (Discord, Telegram & Teams)
 - **Real-time edit streaming** — updates messages as the agent works (Discord: 1.5s, Telegram: 2s)
 - **Emoji status reactions** — processing progress via platform-native reactions
 - **Session pool** — one CLI process per thread/chat, automatic lifecycle management
@@ -42,7 +43,9 @@ Supports Kiro CLI, Claude Code, Codex, GitHub Copilot CLI, and any ACP-compatibl
 |----------|------|-------|-------|--------|
 | Discord  | ✅   | ✅    | ✅    | Available |
 | Telegram | ✅   | ✅    | ✅    | Available |
-| Teams    | —    | —     | —     | Planned |
+| ⚠️ Teams    | ✅   | ✅    | ✅ (STT) | **Experimental / Beta** |
+
+> ⚠️ **Experimental / Beta:** The **Microsoft Teams adapter** and the **Helm chart** (`deploy/helm/quill`) are still in beta. Interfaces, config keys, and chart values may change without notice. Use at your own risk in production.
 
 ---
 
@@ -78,6 +81,14 @@ allowed_chats = [-100123456789]
 # allowed_user_id = ["*"]             # wildcard: any user
 # allowed_user_id = ["123456789"]     # or specific Telegram user IDs (as strings)
 
+[teams]
+app_id = "${TEAMS_APP_ID}"
+app_secret = "${TEAMS_APP_SECRET}"
+tenant_id = "${TEAMS_TENANT_ID}"
+listen = ":3978"
+# allowed_user_id = ["*"]             # wildcard: any user
+# allowed_user_id = ["29:user-id"]    # or specific Teams user IDs
+
 [agent]
 command = "kiro-cli"
 args = ["acp", "--trust-all-tools"]
@@ -94,7 +105,7 @@ remove_after_reply = false
 
 ##### User allowlist (`allowed_user_id`)
 
-`allowed_user_id`, when set on a platform section, **takes precedence** over `allowed_channels` (Discord) / `allowed_chats` (Telegram): only the listed users can trigger the bot, from **any** channel or chat. When unset, the existing channel/chat gate is used unchanged. `["*"]` is a wildcard that allows any user.
+`allowed_user_id`, when set on a platform section, **takes precedence** over `allowed_channels` (Discord / Teams) / `allowed_chats` (Telegram): only the listed users can trigger the bot, from **any** channel or chat. When unset, the existing channel/chat gate is used unchanged. `["*"]` is a wildcard that allows any user.
 
 Matching is against the numeric user ID, not the username — usernames can change, IDs can't.
 
@@ -194,22 +205,21 @@ listen = ":8080"
 
 ---
 
-##### Discord vs Telegram
+##### Platform Comparison
 
-| | Discord | Telegram |
-|---|---|---|
-| **Trigger (channel/group)** | @mention or in-thread | @mention, reply-to-bot, or voice message |
-| **Trigger (DM/private)** | — | All messages |
-| **Thread model** | Auto-creates Discord threads | One session per chat; forum supergroups get one session per topic |
-| **Message limit** | 2,000 chars | 4,096 chars |
-| **Edit streaming interval** | 1.5s | 2s (Telegram rate limit is stricter) |
-| **Markdown** | Native GFM support | `**bold**` auto-converted to `*bold*` (Telegram Markdown v1) |
-| **Status reactions** | Add/remove per emoji | `setMessageReaction` replaces all (one emoji at a time) |
-| **Reaction emojis** | Queued `👀` → Thinking `🤔` → Done `🆗` + random face | Queued `👌` → Thinking `🤔` → Done = random face from allowed set |
-| **Voice in groups** | Requires @mention | Auto-accepted (can't @mention while recording) |
-| **Image handling** | Download from CDN by URL | Download via Bot API `getFile` (largest PhotoSize) |
-| **Bot library** | [discordgo](https://github.com/bwmarrin/discordgo) | [go-telegram/bot](https://github.com/go-telegram/bot) |
-| **Update mechanism** | WebSocket gateway | Long polling |
+| | Discord | Telegram | Teams |
+|---|---|---|---|
+| **Trigger (channel/group)** | @mention or in-thread | @mention, reply-to-bot, or voice message | @mention |
+| **Trigger (DM/private)** | — | All messages | All messages |
+| **Thread model** | Auto-creates Discord threads | One session per chat; forum supergroups get one session per topic | One session per conversation |
+| **Message limit** | 2,000 chars | 4,096 chars | 28,000 chars |
+| **Edit streaming interval** | 1.5s | 2s (Telegram rate limit is stricter) | 2s |
+| **Markdown** | Native GFM support | `**bold**` auto-converted to `*bold*` (Telegram Markdown v1) | Native GFM support |
+| **Status reactions** | Add/remove per emoji | `setMessageReaction` replaces all (one emoji at a time) | Typing indicator |
+| **Voice in groups** | Requires @mention | Auto-accepted (can't @mention while recording) | STT transcription on audio attachments |
+| **Image handling** | Download from CDN by URL | Download via Bot API `getFile` (largest PhotoSize) | Download from `contentUrl` with bearer token |
+| **Bot library** | [discordgo](https://github.com/bwmarrin/discordgo) | [go-telegram/bot](https://github.com/go-telegram/bot) | Custom (Bot Framework REST API) |
+| **Update mechanism** | WebSocket gateway | Long polling | HTTP webhook (`POST /api/messages`) |
 
 ##### Telegram Setup Notes
 
@@ -217,6 +227,15 @@ listen = ":8080"
 2. **Disable privacy mode** via BotFather (`/setprivacy` → Disable) so the bot receives @mentions in groups, then remove and re-add the bot to the group
 3. Get the group chat ID: start the bot without `allowed_chats`, send a message in the group — the log will show `🚨👽🚨 telegram message from unlisted chat ... chat_id=XXXXX`
 4. Add the `chat_id` to `allowed_chats` in your config
+
+##### Teams Setup Notes
+
+> ⚠️ **Beta:** Teams support is still experimental. Inbound JWT verification, attachment handling, and the Helm chart's ingress routing may evolve. Report issues at <https://github.com/neilkuan/quill/issues>.
+
+1. Create an Azure Bot resource in [Azure Portal](https://portal.azure.com) — note the **App ID**, **App Secret**, and **Tenant ID**
+2. Set the messaging endpoint to `https://<your-domain>/api/messages` (Quill listens on `:3978` by default)
+3. Upload the app manifest to [Teams Developer Portal](https://dev.teams.microsoft.com/apps) — see `teams/appmanifest/README.md` for packaging instructions
+4. Bots created via Developer Portal are **single-tenant** by default — Quill's auth flow uses the tenant-specific token URL
 
 ---
 
@@ -236,6 +255,24 @@ docker run -v $(pwd)/config.toml:/etc/quill/config.toml \
   ghcr.io/neilkuan/quill:latest
 ```
 
+##### Kubernetes (Helm)
+
+> ⚠️ **Beta:** The Helm chart is experimental and primarily exercised on EKS with the AWS Load Balancer Controller. Values and templates may change between releases.
+
+A Helm chart is included for EKS deployment (required for Teams webhook ingress):
+
+```bash
+helm install quill deploy/helm/quill \
+  -n quill --create-namespace \
+  --set instances.kiro.secrets.TEAMS_APP_ID="<app-id>" \
+  --set instances.kiro.secrets.TEAMS_APP_SECRET="<secret>" \
+  --set instances.kiro.secrets.TEAMS_TENANT_ID="<tenant>" \
+  --set ingress.host="quill.example.com" \
+  --set 'ingress.annotations.alb\.ingress\.kubernetes\.io/certificate-arn=arn:aws:acm:...'
+```
+
+The chart supports multi-instance deployment — run Kiro, Claude, and Codex in a single release. See [`deploy/helm/quill/README.md`](deploy/helm/quill/README.md) for details.
+
 ---
 
 ##### Development
@@ -243,7 +280,7 @@ docker run -v $(pwd)/config.toml:/etc/quill/config.toml \
 ###### Prerequisites
 
 - Go 1.23+
-- A Discord bot token with `MESSAGE_CONTENT` intent enabled, and/or a Telegram bot token
+- A Discord bot token with `MESSAGE_CONTENT` intent enabled, a Telegram bot token, and/or a Teams Azure Bot registration (App ID + App Secret)
 - An ACP-compatible CLI installed (e.g., `kiro-cli`, `claude`, `codex`)
 
 ###### Build
@@ -290,6 +327,15 @@ quill/
 │   ├── adapter.go       # Telegram platform adapter (implements Platform interface)
 │   ├── handler.go       # Telegram message handler, mention/reply detection, edit streaming
 │   └── reactions.go     # Telegram reaction controller via setMessageReaction API
+├── teams/
+│   ├── adapter.go       # Teams platform adapter (HTTP webhook server)
+│   ├── auth.go          # Azure AD OAuth2 + JWT validation
+│   ├── client.go        # Bot Framework REST API client
+│   ├── handler.go       # Teams message handler, mention detection, ACP streaming
+│   ├── types.go         # Bot Framework Activity types
+│   └── appmanifest/     # Teams App Manifest, icons, packaging guide
+├── deploy/
+│   └── helm/quill/      # Helm chart for EKS deployment (multi-instance)
 ├── scripts/
 │   └── release.sh       # Release automation (stable PR + RC tags)
 ├── Dockerfile           # Kiro CLI variant

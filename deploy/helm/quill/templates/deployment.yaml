@@ -1,0 +1,76 @@
+{{- range $name, $inst := .Values.instances }}
+{{- if $inst.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "quill.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "quill.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "quill.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "quill.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $name }}
+      annotations:
+        checksum/config: {{ toJson $inst | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: quill
+          image: "{{ $inst.image.repository }}:{{ $inst.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $inst.image.pullPolicy }}
+          args: ["/etc/quill/config.toml"]
+          ports:
+            - name: teams
+              containerPort: 3978
+            - name: api
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: {{ include "quill.fullname" $ }}-{{ $name }}-secrets
+          env:
+            - name: QUILL_LOG
+              value: {{ $inst.agent.logLevel | quote }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/quill
+              readOnly: true
+            - name: workdir
+              mountPath: {{ $inst.agent.workingDir }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with $inst.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "quill.fullname" $ }}-{{ $name }}-config
+        - name: workdir
+          emptyDir: {}
+{{- end }}
+{{- end }}

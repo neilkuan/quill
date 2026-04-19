@@ -1,0 +1,58 @@
+{{- if .Values.ingress.enabled }}
+{{- /*
+Find the single Teams-enabled instance. Only one instance may serve the Teams
+webhook (/api/messages) through the shared Ingress — Bot Framework routes by
+service URL, not by tenant, so multiple bots require distinct hosts/ingresses.
+*/ -}}
+{{- $teamsInstance := "" -}}
+{{- $apiInstance := "" -}}
+{{- range $name, $inst := .Values.instances }}
+  {{- if $inst.enabled }}
+    {{- if $inst.teams.enabled }}
+      {{- if $teamsInstance }}
+        {{- fail (printf "ingress: multiple instances have teams.enabled (%s and %s); disable all but one or deploy separate Helm releases with distinct hosts" $teamsInstance $name) }}
+      {{- end }}
+      {{- $teamsInstance = $name }}
+    {{- end }}
+    {{- if not $apiInstance }}
+      {{- $apiInstance = $name }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "quill.fullname" . }}
+  labels:
+    {{- include "quill.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host }}
+      {{- end }}
+      http:
+        paths:
+          {{- if $teamsInstance }}
+          - path: /api/messages
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "quill.fullname" . }}-{{ $teamsInstance }}
+                port:
+                  name: teams
+          {{- end }}
+          {{- if and .Values.api.enabled $apiInstance }}
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "quill.fullname" . }}-{{ $apiInstance }}
+                port:
+                  name: api
+          {{- end }}
+{{- end }}

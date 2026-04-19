@@ -1,0 +1,99 @@
+# Each instance gets its own Deployment, Service, ConfigMap, and Secret.
+# Ingress is shared — all instances route through a single ALB.
+instances:
+  kiro:
+    enabled: true
+    image:
+      repository: ghcr.io/neilkuan/quill
+      tag: ""  # defaults to appVersion
+      pullPolicy: IfNotPresent
+    agent:
+      command: kiro-cli
+      args: ["acp", "--trust-all-tools"]
+      workingDir: /home/agent
+      logLevel: info
+    secrets:
+      TEAMS_APP_ID: ""
+      TEAMS_APP_SECRET: ""
+      TEAMS_TENANT_ID: ""
+      DISCORD_BOT_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      OPENAI_API_KEY: ""
+      GEMINI_API_KEY: ""
+    teams:
+      enabled: true
+      listen: ":3978"
+      # Identity gate — overrides allowedChannels when non-empty. Use "*" to allow any user.
+      allowedUserID: []
+      # Location gate — conversation IDs permitted to talk to the bot.
+      allowedChannels: []
+    discord:
+      enabled: false
+      allowedChannels: []
+    telegram:
+      enabled: false
+      allowedChats: []
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+
+  # -- Example: uncomment to deploy Claude alongside Kiro
+  # claude:
+  #   enabled: false
+  #   image:
+  #     repository: ghcr.io/neilkuan/quill-claude
+  #     tag: ""
+  #     pullPolicy: IfNotPresent
+  #   agent:
+  #     command: claude-agent-acp
+  #     args: []
+  #     workingDir: /home/node
+  #     logLevel: info
+  #   secrets:
+  #     DISCORD_BOT_TOKEN: ""
+  #     ANTHROPIC_API_KEY: ""
+  #   teams:
+  #     enabled: false
+  #   discord:
+  #     enabled: true
+  #     allowedChannels: ["1234567890"]
+  #   telegram:
+  #     enabled: false
+  #     allowedChats: []
+  #   resources:
+  #     requests:
+  #       cpu: 250m
+  #       memory: 256Mi
+  #     limits:
+  #       cpu: "1"
+  #       memory: 512Mi
+
+# -- Shared settings
+pool:
+  maxSessions: 10
+  sessionTTLHours: 24
+
+api:
+  enabled: true
+  listen: ":8080"
+
+service:
+  type: NodePort
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
+  host: ""

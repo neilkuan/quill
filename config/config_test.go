@@ -609,6 +609,30 @@ api_key = "${OPENAI_API_KEY}"
 	}
 }
 
+func TestTeamsAutoEnable(t *testing.T) {
+	content := `
+[agent]
+command = "echo"
+working_dir = "/tmp"
+
+[teams]
+app_id = "test-app-id"
+app_secret = "test-app-secret"
+tenant_id = "test-tenant-id"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.Teams.Enabled {
+		t.Error("expected Teams to be auto-enabled when app_id and app_secret are set")
+	}
+	if cfg.Teams.Listen != ":3978" {
+		t.Errorf("expected default listen :3978, got %s", cfg.Teams.Listen)
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

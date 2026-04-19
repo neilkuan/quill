@@ -1,0 +1,68 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.25",
+  "version": "1.0.0",
+  "id": "{{MICROSOFT_APP_ID}}",
+  "developer": {
+    "name": "Quill",
+    "websiteUrl": "https://github.com/neilkuan/quill",
+    "privacyUrl": "https://github.com/neilkuan/quill/blob/main/PRIVACY.md",
+    "termsOfUseUrl": "https://github.com/neilkuan/quill/blob/main/TERMS.md"
+  },
+  "name": {
+    "short": "Quill",
+    "full": "Quill AI Assistant"
+  },
+  "description": {
+    "short": "AI chat bot powered by ACP agents",
+    "full": "Quill is a multi-platform AI chat bot that proxies messages to an AI agent process via the Agent Communication Protocol (ACP). Supports streaming responses, image/voice/file attachments, and interactive bot commands."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#4F46E5",
+  "bots": [
+    {
+      "botId": "{{MICROSOFT_APP_ID}}",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupChat"
+          ],
+          "commands": [
+            {
+              "title": "sessions",
+              "description": "List active ACP sessions"
+            },
+            {
+              "title": "info",
+              "description": "Show current session details"
+            },
+            {
+              "title": "reset",
+              "description": "Reset current session"
+            },
+            {
+              "title": "resume",
+              "description": "Resume the last session"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}

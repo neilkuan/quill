@@ -142,13 +142,20 @@ type TelegramConfig struct {
 	Reactions      ReactionsConfig `toml:"reactions"`
 }
 
-// --- Teams (stub) ---
+// --- Teams ---
 
 type TeamsConfig struct {
-	Enabled   bool   `toml:"enabled"`
-	AppID     string `toml:"app_id"`
-	AppSecret string `toml:"app_secret"`
-	TenantID  string `toml:"tenant_id"`
+	Enabled        bool     `toml:"enabled"`
+	AppID          string   `toml:"app_id"`
+	AppSecret      string   `toml:"app_secret"`
+	TenantID       string   `toml:"tenant_id"`
+	Listen         string   `toml:"listen"`
+	AllowedChannels []string `toml:"allowed_channels"`
+	// AllowedUserIDs, when non-empty, takes precedence over AllowedChannels:
+	// only messages from these Teams user IDs will be processed (regardless of channel).
+	// Use ["*"] as a wildcard to allow any user.
+	AllowedUserIDs []string `toml:"allowed_user_id"`
+	ToolDisplay    string   `toml:"tool_display"`
 }
 
 // --- Defaults ---
@@ -191,6 +198,14 @@ func applyDefaults(cfg *Config) {
 	}
 
 	applyTelegramReactionDefaults(&cfg.Telegram.Reactions)
+
+	// Teams — if the section has app_id and app_secret, default to enabled
+	if cfg.Teams.AppID != "" && cfg.Teams.AppSecret != "" && !cfg.Teams.Enabled {
+		cfg.Teams.Enabled = true
+	}
+	if cfg.Teams.Listen == "" {
+		cfg.Teams.Listen = ":3978"
+	}
 }
 
 func applySTTDefaults(tc *STTConfig) {

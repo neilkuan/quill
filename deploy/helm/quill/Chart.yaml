@@ -1,0 +1,6 @@
+apiVersion: v2
+name: quill
+description: ACP bridge for Discord, Telegram, and Microsoft Teams
+type: application
+version: 0.1.0
+appVersion: ""

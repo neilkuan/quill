@@ -144,6 +144,32 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }}@sha256:%s ' *)
 
+  # --- Pre-release: push Helm chart as OCI artifact ---
+  push-chart:
+    needs: [resolve-tag, merge-manifests]
+    if: needs.resolve-tag.outputs.is_prerelease == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Package and push chart
+        run: |
+          VERSION="${{ needs.resolve-tag.outputs.version }}"
+          # Set chart version + appVersion to match the release
+          sed -i "s/^version:.*/version: ${VERSION}/" deploy/helm/quill/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" deploy/helm/quill/Chart.yaml
+
+          cat deploy/helm/quill/Chart.yaml
+          helm package deploy/helm/quill
+          ls -la quill-*.tgz
+          helm push quill-${VERSION}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+
   # --- Stable release: promote pre-release image (no rebuild) ---
   promote-stable:
     needs: resolve-tag

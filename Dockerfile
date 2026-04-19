@@ -13,7 +13,7 @@ FROM public.ecr.aws/aws-cli/aws-cli:latest AS aws-source
 # --- Runtime stage ---
 FROM debian:bookworm-slim
 
-ARG GH_CLI_VERSION=2.89.0
+ARG GH_CLI_VERSION=2.90.0
 # Change KIRO_CLI_CACHE_BUST to force re-download of kiro-cli (no versioned URL available)
 ARG KIRO_CLI_CACHE_BUST=2026-04-14
 

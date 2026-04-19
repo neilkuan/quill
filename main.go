@@ -13,6 +13,7 @@ import (
 	appconfig "github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/discord"
 	"github.com/neilkuan/quill/platform"
+	"github.com/neilkuan/quill/teams"
 	"github.com/neilkuan/quill/telegram"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
@@ -141,7 +142,16 @@ func main() {
 			"allowed_user_id", cfg.Telegram.AllowedUserIDs)
 	}
 
-	// Future: Teams adapter goes here
+	if cfg.Teams.Enabled {
+		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown)
+		if err != nil {
+			slog.Error("failed to create teams adapter", "error", err)
+			os.Exit(1)
+		}
+		platforms = append(platforms, adapter)
+		healthChecks = append(healthChecks, adapter.Healthy)
+		slog.Info("teams adapter registered", "listen", cfg.Teams.Listen)
+	}
 
 	// Start HTTP API server (optional)
 	var apiServer *api.Server

@@ -101,6 +101,38 @@ Tag patterns:
 | `build.yml` | Any `v*` tag pushed | Build (RC) or promote (stable) Docker images |
 | `test.yml` | PR / push to main | Go build, vet, test |
 
+## Helm Chart
+
+The Helm chart at `deploy/helm/quill/` is published as an OCI artifact to GHCR on every RC build:
+
+```
+oci://ghcr.io/neilkuan/charts/quill:<version>
+```
+
+Install via:
+```bash
+helm install quill oci://ghcr.io/neilkuan/charts/quill --version <version>
+```
+
+### Bootstrap the Helm chart GHCR package (one-time)
+
+Same as Docker images — the `charts/quill` package must exist before CI can push:
+
+```bash
+# 1. Login
+gh auth token | helm registry login ghcr.io -u neilkuan --password-stdin
+
+# 2. Package and push a seed version
+helm package deploy/helm/quill
+helm push quill-0.1.0.tgz oci://ghcr.io/neilkuan/charts
+
+# 3. Package settings (web UI):
+#    - Visibility: Public
+#    - Manage Actions access → Add repository → neilkuan/quill → Write
+```
+
+After this, the `push-chart` job in `build.yml` will automatically publish on every RC tag.
+
 ## Adding a new agent variant (e.g. copilot, qwen, …)
 
 For every new agent CLI we support, a new image `ghcr.io/neilkuan/quill-<name>` has to be published. The flow below is mandatory — skipping the bootstrap step will make the first RC build fail with `denied: permission_denied: write_package`, which then cancels the whole matrix because `build.yml` uses registry cache (`cache-to: type=registry,ref=…:cache-<runner>`) that tries to write before the push is even attempted.
