@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -76,11 +77,9 @@ func (h *Handler) OnMessage(activity *Activity) {
 	}
 
 	// Check for command
-	if cmdName := extractCommand(prompt); cmdName != "" {
-		if cmd, ok := command.ParseCommand(cmdName); ok {
-			h.handleCommand(activity, cmd)
-			return
-		}
+	if cmd, ok := command.ParseCommand(prompt); ok {
+		h.handleCommand(activity, cmd)
+		return
 	}
 
 	// Check if we have content to process
@@ -519,7 +518,7 @@ func isBotMentioned(botID string, entities []Entity) bool {
 func stripBotMention(text string, botID string, entities []Entity) string {
 	for _, e := range entities {
 		if e.Type == "mention" && e.Mentioned != nil && e.Mentioned.ID == botID && e.Text != "" {
-			text = strings.ReplaceAll(text, e.Text, "")
+			text = strings.Replace(text, e.Text, "", 1)
 		}
 	}
 	return strings.TrimSpace(text)
@@ -527,26 +526,6 @@ func stripBotMention(text string, botID string, entities []Entity) string {
 
 func buildSessionKey(conversationID string) string {
 	return fmt.Sprintf("teams:%s", conversationID)
-}
-
-func extractCommand(text string) string {
-	text = strings.TrimSpace(text)
-	parts := strings.Fields(text)
-	if len(parts) == 0 {
-		return ""
-	}
-
-	cmdName := strings.ToLower(parts[0])
-	knownCommands := map[string]bool{
-		command.CmdSessions: true,
-		command.CmdReset:    true,
-		command.CmdResume:   true,
-		command.CmdInfo:     true,
-	}
-	if !knownCommands[cmdName] {
-		return ""
-	}
-	return cmdName
 }
 
 func composeDisplay(toolLines []string, text string) string {
@@ -606,14 +585,88 @@ func isAudioContentType(contentType string) bool {
 	return false
 }
 
+// extensionForContentType returns a best-effort file extension (including the
+// leading dot) for a MIME type, or an empty string when no mapping exists.
+// Used when the attachment Name is missing so downstream agents can still
+// recognize the file format.
+func extensionForContentType(contentType string) string {
+	// Strip any ";charset=..." suffix.
+	if i := strings.Index(contentType, ";"); i >= 0 {
+		contentType = contentType[:i]
+	}
+	contentType = strings.TrimSpace(strings.ToLower(contentType))
+	if contentType == "" {
+		return ""
+	}
+	// Curated map — mime.ExtensionsByType returns non-deterministic order and
+	// misses some common Teams types.
+	switch contentType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/bmp":
+		return ".bmp"
+	case "image/svg+xml":
+		return ".svg"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/mp4", "audio/aac":
+		return ".m4a"
+	case "audio/ogg", "application/ogg":
+		return ".ogg"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/webm":
+		return ".webm"
+	case "audio/flac":
+		return ".flac"
+	case "video/mp4":
+		return ".mp4"
+	case "application/pdf":
+		return ".pdf"
+	case "application/zip":
+		return ".zip"
+	case "text/plain":
+		return ".txt"
+	case "text/csv":
+		return ".csv"
+	case "application/json":
+		return ".json"
+	// Microsoft Office — OOXML (modern)
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return ".pptx"
+	// Microsoft Office — legacy binary formats
+	case "application/msword":
+		return ".doc"
+	case "application/vnd.ms-excel":
+		return ".xls"
+	case "application/vnd.ms-powerpoint":
+		return ".ppt"
+	}
+	// Fallback to the runtime MIME DB.
+	if exts, err := mime.ExtensionsByType(contentType); err == nil && len(exts) > 0 {
+		return exts[0]
+	}
+	return ""
+}
+
 // downloadAttachment downloads an attachment from contentURL with a max size of 25MB
 func (h *Handler) downloadAttachment(att Attachment, tmpDir string) (string, error) {
 	const maxSize = 25 * 1024 * 1024 // 25MB
 
-	// Sanitize filename
-	filename := att.Name
-	if filename == "" {
-		filename = "attachment"
+	// Sanitize filename: strip any path components, then replace unsafe chars.
+	filename := filepath.Base(att.Name)
+	if filename == "" || filename == "." || filename == "/" {
+		filename = "attachment" + extensionForContentType(att.ContentType)
 	}
 	filename = regexp.MustCompile(`[^\w\.\-]`).ReplaceAllString(filename, "_")
 
@@ -631,7 +684,7 @@ func (h *Handler) downloadAttachment(att Attachment, tmpDir string) (string, err
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.Client.http.Do(req)
 	if err != nil {
 		return "", err
 	}

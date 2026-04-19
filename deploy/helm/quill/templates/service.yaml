@@ -1,17 +1,28 @@
+{{- range $name, $inst := .Values.instances }}
+{{- if $inst.enabled }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "quill.fullname" . }}
+  name: {{ include "quill.fullname" $ }}-{{ $name }}
   labels:
-    {{- include "quill.labels" . | nindent 4 }}
+    {{- include "quill.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
 spec:
-  type: {{ .Values.service.type }}
+  type: {{ $.Values.service.type }}
   selector:
-    {{- include "quill.selectorLabels" . | nindent 4 }}
+    {{- include "quill.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
   ports:
+    {{- if $inst.teams.enabled }}
     - name: teams
       port: 3978
       targetPort: teams
+    {{- end }}
+    {{- if $.Values.api.enabled }}
     - name: api
       port: 8080
       targetPort: api
+    {{- end }}
+{{- end }}
+{{- end }}

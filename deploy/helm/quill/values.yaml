@@ -23,6 +23,10 @@ instances:
     teams:
       enabled: true
       listen: ":3978"
+      # Identity gate — overrides allowedChannels when non-empty. Use "*" to allow any user.
+      allowedUserID: []
+      # Location gate — conversation IDs permitted to talk to the bot.
+      allowedChannels: []
     discord:
       enabled: false
       allowedChannels: []

@@ -105,23 +105,36 @@ func TestBuildSessionKey(t *testing.T) {
 	}
 }
 
-func TestExtractCommand(t *testing.T) {
+func TestExtensionForContentType(t *testing.T) {
 	tests := []struct {
-		text    string
-		wantCmd string
+		name        string
+		contentType string
+		want        string
 	}{
-		{"sessions", "sessions"},
-		{"info", "info"},
-		{"reset", "reset"},
-		{"resume", "resume"},
-		{"hello world", ""},
-		{"", ""},
+		{"png", "image/png", ".png"},
+		{"jpeg", "image/jpeg", ".jpg"},
+		{"jpg alias", "image/jpg", ".jpg"},
+		{"mp3", "audio/mpeg", ".mp3"},
+		{"ogg voice", "audio/ogg", ".ogg"},
+		{"pdf", "application/pdf", ".pdf"},
+		{"with charset suffix", "text/plain; charset=utf-8", ".txt"},
+		{"upper case", "IMAGE/PNG", ".png"},
+		{"csv", "text/csv", ".csv"},
+		{"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"},
+		{"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"},
+		{"pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"},
+		{"doc legacy", "application/msword", ".doc"},
+		{"xls legacy", "application/vnd.ms-excel", ".xls"},
+		{"ppt legacy", "application/vnd.ms-powerpoint", ".ppt"},
+		{"empty", "", ""},
+		{"unknown falls through", "application/x-made-up", ""},
 	}
-
 	for _, tt := range tests {
-		cmd := extractCommand(tt.text)
-		if cmd != tt.wantCmd {
-			t.Errorf("extractCommand(%q) = %q, want %q", tt.text, cmd, tt.wantCmd)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := extensionForContentType(tt.contentType)
+			if got != tt.want {
+				t.Errorf("extensionForContentType(%q) = %q, want %q", tt.contentType, got, tt.want)
+			}
+		})
 	}
 }

@@ -28,14 +28,21 @@ type BotAuth struct {
 	tokenMu     sync.Mutex
 	token       string
 	tokenExpiry time.Time
+
+	// JWKS providers for inbound signature verification.
+	// Exported fields allow tests to inject fakes.
+	BotFrameworkJWKS *JWKSProvider
+	TenantJWKS       *JWKSProvider
 }
 
 func NewBotAuth(appID, appSecret, tenantID string) *BotAuth {
 	return &BotAuth{
-		appID:     appID,
-		appSecret: appSecret,
-		tenantID:  tenantID,
-		tokenURL:  fmt.Sprintf(defaultTokenURL, tenantID),
+		appID:            appID,
+		appSecret:        appSecret,
+		tenantID:         tenantID,
+		tokenURL:         fmt.Sprintf(defaultTokenURL, tenantID),
+		BotFrameworkJWKS: NewJWKSProvider(botFrameworkOpenIDURL),
+		TenantJWKS:       NewJWKSProvider(fmt.Sprintf(tenantOpenIDURLTemplate, tenantID)),
 	}
 }
 
@@ -98,38 +105,43 @@ func (a *BotAuth) ValidateInbound(r *http.Request) error {
 	return a.validateJWT(tokenString)
 }
 
+// validateJWT verifies the token's RS256 signature against the Bot Framework
+// or tenant JWKS, and checks that audience and issuer match this bot.
 func (a *BotAuth) validateJWT(tokenString string) error {
-	parser := jwtv5.NewParser(
+	keyFunc := func(token *jwtv5.Token) (interface{}, error) {
+		kid, _ := token.Header["kid"].(string)
+		if kid == "" {
+			return nil, fmt.Errorf("missing kid in JWT header")
+		}
+		claims, ok := token.Claims.(jwtv5.MapClaims)
+		if !ok {
+			return nil, fmt.Errorf("unexpected claims type")
+		}
+		iss, _ := claims["iss"].(string)
+		provider := a.providerForIssuer(iss)
+		if provider == nil {
+			return nil, fmt.Errorf("invalid issuer: %s", iss)
+		}
+		return provider.GetKey(kid)
+	}
+
+	if _, err := jwtv5.Parse(tokenString, keyFunc,
+		jwtv5.WithValidMethods([]string{"RS256"}),
 		jwtv5.WithAudience(a.appID),
 		jwtv5.WithIssuedAt(),
-	)
+	); err != nil {
+		return fmt.Errorf("verify JWT: %w", err)
+	}
+	return nil
+}
 
-	token, _, err := parser.ParseUnverified(tokenString, jwtv5.MapClaims{})
-	if err != nil {
-		return fmt.Errorf("parse JWT: %w", err)
+func (a *BotAuth) providerForIssuer(iss string) *JWKSProvider {
+	switch iss {
+	case "https://api.botframework.com":
+		return a.BotFrameworkJWKS
+	case "https://sts.windows.net/" + a.tenantID + "/",
+		"https://login.microsoftonline.com/" + a.tenantID + "/v2.0":
+		return a.TenantJWKS
 	}
-
-	claims, ok := token.Claims.(jwtv5.MapClaims)
-	if !ok {
-		return fmt.Errorf("unexpected claims type")
-	}
-
-	iss, _ := claims["iss"].(string)
-	validIssuers := []string{
-		"https://api.botframework.com",
-		"https://sts.windows.net/" + a.tenantID + "/",
-		"https://login.microsoftonline.com/" + a.tenantID + "/v2.0",
-	}
-	issuerValid := false
-	for _, valid := range validIssuers {
-		if iss == valid {
-			issuerValid = true
-			break
-		}
-	}
-	if !issuerValid {
-		return fmt.Errorf("invalid issuer: %s", iss)
-	}
-
 	return nil
 }

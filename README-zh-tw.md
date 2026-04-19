@@ -43,7 +43,9 @@
 |------|------|------|------|------|
 | Discord  | ✅ | ✅ | ✅ | 可用 |
 | Telegram | ✅ | ✅ | ✅ | 可用 |
-| Teams    | ✅ | ✅ | ✅ (STT) | 可用 |
+| ⚠️ Teams    | ✅ | ✅ | ✅ (STT) | **實驗 / Beta** |
+
+> ⚠️ **實驗性 / Beta：** **Microsoft Teams adapter** 與 **Helm chart**（`deploy/helm/quill`）仍在 beta 階段。介面、config key、chart values 可能在未來版本直接調整，恕不另行公告。生產環境請自行評估風險後使用。
 
 ---
 
@@ -228,6 +230,8 @@ listen = ":8080"
 
 ##### Teams 設定注意事項
 
+> ⚠️ **Beta：** Teams 支援仍在實驗階段。Inbound JWT 驗證、附件處理、Helm chart ingress 路由仍可能調整。遇到問題請回報 <https://github.com/neilkuan/quill/issues>。
+
 1. 在 [Azure Portal](https://portal.azure.com) 建立 Azure Bot 資源 — 記下 **App ID**、**App Secret** 和 **Tenant ID**
 2. 設定 messaging endpoint 為 `https://<your-domain>/api/messages`（Quill 預設監聽 `:3978`）
 3. 將 app manifest 上傳到 [Teams Developer Portal](https://dev.teams.microsoft.com/apps) — 打包說明請見 `teams/appmanifest/README.md`
@@ -252,6 +256,8 @@ docker run -v $(pwd)/config.toml:/etc/quill/config.toml \
 ```
 
 ##### Kubernetes（Helm）
+
+> ⚠️ **Beta：** Helm chart 仍在實驗階段，主要在 EKS + AWS Load Balancer Controller 環境下驗證。Values 與 templates 在版本之間可能會改動。
 
 包含 Helm chart 供 EKS 部署（Teams webhook 需要公開 HTTPS endpoint）：
 

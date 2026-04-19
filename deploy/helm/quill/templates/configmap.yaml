@@ -16,6 +16,12 @@ data:
     app_secret = "${TEAMS_APP_SECRET}"
     tenant_id = "${TEAMS_TENANT_ID}"
     listen = {{ $inst.teams.listen | quote }}
+    {{- with $inst.teams.allowedUserID }}
+    allowed_user_id = {{ toJson . }}
+    {{- end }}
+    {{- with $inst.teams.allowedChannels }}
+    allowed_channels = {{ toJson . }}
+    {{- end }}
     {{- end }}
 
     {{- if $inst.discord.enabled }}

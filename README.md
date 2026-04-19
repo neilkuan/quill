@@ -43,7 +43,9 @@ Supports Kiro CLI, Claude Code, Codex, GitHub Copilot CLI, and any ACP-compatibl
 |----------|------|-------|-------|--------|
 | Discord  | ✅   | ✅    | ✅    | Available |
 | Telegram | ✅   | ✅    | ✅    | Available |
-| Teams    | ✅   | ✅    | ✅ (STT) | Available |
+| ⚠️ Teams    | ✅   | ✅    | ✅ (STT) | **Experimental / Beta** |
+
+> ⚠️ **Experimental / Beta:** The **Microsoft Teams adapter** and the **Helm chart** (`deploy/helm/quill`) are still in beta. Interfaces, config keys, and chart values may change without notice. Use at your own risk in production.
 
 ---
 
@@ -228,6 +230,8 @@ listen = ":8080"
 
 ##### Teams Setup Notes
 
+> ⚠️ **Beta:** Teams support is still experimental. Inbound JWT verification, attachment handling, and the Helm chart's ingress routing may evolve. Report issues at <https://github.com/neilkuan/quill/issues>.
+
 1. Create an Azure Bot resource in [Azure Portal](https://portal.azure.com) — note the **App ID**, **App Secret**, and **Tenant ID**
 2. Set the messaging endpoint to `https://<your-domain>/api/messages` (Quill listens on `:3978` by default)
 3. Upload the app manifest to [Teams Developer Portal](https://dev.teams.microsoft.com/apps) — see `teams/appmanifest/README.md` for packaging instructions
@@ -252,6 +256,8 @@ docker run -v $(pwd)/config.toml:/etc/quill/config.toml \
 ```
 
 ##### Kubernetes (Helm)
+
+> ⚠️ **Beta:** The Helm chart is experimental and primarily exercised on EKS with the AWS Load Balancer Controller. Values and templates may change between releases.
 
 A Helm chart is included for EKS deployment (required for Teams webhook ingress):
 
