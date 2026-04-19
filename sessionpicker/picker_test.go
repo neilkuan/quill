@@ -27,8 +27,8 @@ func TestDetect(t *testing.T) {
 		{"claude", "claude-agent-acp", true, "claude-agent-acp"},
 		{"copilot", "copilot", true, "copilot"},
 		{"copilot absolute path", "/usr/local/bin/copilot", true, "copilot"},
-		{"codex not supported yet", "codex", false, ""},
-		{"codex-acp not supported yet", "codex-acp", false, ""},
+		{"codex", "codex", true, "codex-acp"},
+		{"codex-acp", "codex-acp", true, "codex-acp"},
 		{"unknown", "some-other-agent", false, ""},
 		{"empty", "", false, ""},
 	}

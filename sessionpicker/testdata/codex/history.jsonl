@@ -1,0 +1,7 @@
+{"session_id":"codex-aaaa-0001","ts":1776592000,"text":"first prompt of session aaaa"}
+{"session_id":"codex-aaaa-0001","ts":1776592100,"text":"follow-up in aaaa"}
+{"session_id":"codex-bbbb-0002","ts":1776592667,"text":"review change for pr 108"}
+{"session_id":"codex-aaaa-0001","ts":1776592300,"text":"second follow-up in aaaa"}
+{"session_id":"codex-cccc-0003","ts":1776592867,"text":"幫我看一下 https://github.com/neilkuan/quill/issues/107 這個 issue 想實作什麼？"}
+not a valid json line
+{"session_id":"","ts":1776592999,"text":"missing session_id — skipped"}

@@ -44,6 +44,8 @@ func Detect(agentCommand string) (Picker, bool) {
 		return NewClaudePicker(""), true
 	case "copilot":
 		return NewCopilotPicker(""), true
+	case "codex-acp", "codex":
+		return NewCodexPicker(""), true
 	}
 	return nil, false
 }
