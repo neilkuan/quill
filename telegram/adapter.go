@@ -130,6 +130,7 @@ func (a *Adapter) Start() error {
 			{Command: "info", Description: "Show current chat session details"},
 			{Command: "reset", Description: "Reset the current session"},
 			{Command: "resume", Description: "Attempt to restore a previous session for this chat"},
+			{Command: "stop", Description: "Interrupt the agent's current reply (session kept alive)"},
 		},
 	})
 	if err != nil {

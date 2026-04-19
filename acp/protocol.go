@@ -48,6 +48,21 @@ func NewJsonRpcRequest(id uint64, method string, params interface{}) *JsonRpcReq
 	}
 }
 
+// JsonRpcNotification is a JSON-RPC 2.0 notification (no id, no response expected).
+type JsonRpcNotification struct {
+	Jsonrpc string      `json:"jsonrpc"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params,omitempty"`
+}
+
+func NewJsonRpcNotification(method string, params interface{}) *JsonRpcNotification {
+	return &JsonRpcNotification{
+		Jsonrpc: "2.0",
+		Method:  method,
+		Params:  params,
+	}
+}
+
 type JsonRpcResponse struct {
 	Jsonrpc string      `json:"jsonrpc"`
 	ID      uint64      `json:"id"`
@@ -162,6 +177,23 @@ func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
 	default:
 		return nil
 	}
+}
+
+// StopReason returns the stopReason field from a session/prompt response.
+// Returns "" when the message is not a response, has no result, or has
+// no stopReason field. Common values: "end_turn", "cancelled",
+// "max_tokens", "refusal".
+func StopReason(msg *JsonRpcMessage) string {
+	if msg == nil || msg.ID == nil || msg.Result == nil {
+		return ""
+	}
+	var r struct {
+		StopReason string `json:"stopReason"`
+	}
+	if err := json.Unmarshal(*msg.Result, &r); err != nil {
+		return ""
+	}
+	return r.StopReason
 }
 
 func extractStringField(m map[string]json.RawMessage, key string) string {

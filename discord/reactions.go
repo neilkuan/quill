@@ -104,6 +104,16 @@ func (c *StatusReactionController) SetError() {
 	c.finish(c.emojis.Error)
 }
 
+// SetCancelled is a terminal state for user-triggered cancellation
+// (session/cancel). Distinct from SetError so downstream UI can tell the
+// difference between a crash and an intentional stop.
+func (c *StatusReactionController) SetCancelled() {
+	if !c.enabled {
+		return
+	}
+	c.finish("🛑")
+}
+
 func (c *StatusReactionController) Clear() {
 	if !c.enabled {
 		return

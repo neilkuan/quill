@@ -404,6 +404,129 @@ func (c *AcpConnection) PromptDone() {
 	c.promptMu.Unlock()
 }
 
+// cancelWatchdogTimeout is how long SessionCancel waits for the agent to
+// honor session/cancel (i.e. return its pending session/prompt response
+// with stopReason="cancelled") before synthesizing that response itself.
+// Some ACP agents may not implement session/cancel; without this fallback
+// the prompt goroutine would block indefinitely on the pending channel.
+var cancelWatchdogTimeout = 10 * time.Second
+
+// watchdogPreSendHook is called (when non-nil) immediately before the
+// watchdog enters its blocking send on notifyCh. Intended for tests
+// that need to synchronize with the exact moment the watchdog is about
+// to block, instead of relying on wall-clock sleeps. Nil in production.
+var watchdogPreSendHook func()
+
+// SessionCancel sends a session/cancel notification to the agent.
+// This is a JSON-RPC notification (no id, no response); the agent stops
+// producing output for the active prompt and the pending session/prompt
+// response returns with stopReason="cancelled".
+//
+// Must be called from a goroutine distinct from the one blocked inside
+// SessionPrompt — it does NOT attempt to acquire promptMu, since the
+// prompt goroutine already holds it and releases it via PromptDone after
+// the cancelled response arrives.
+//
+// A watchdog goroutine force-resolves any still-pending session/prompt
+// requests with a synthetic stopReason="cancelled" response after
+// cancelWatchdogTimeout, guarding against agents that ignore
+// session/cancel or have died mid-prompt.
+func (c *AcpConnection) SessionCancel() error {
+	if c.SessionID == "" {
+		return fmt.Errorf("no session")
+	}
+	if !c.Alive() {
+		return fmt.Errorf("connection not alive")
+	}
+
+	// Snapshot pending request IDs before sending cancel. Only these IDs
+	// will be force-resolved by the watchdog — IDs created *after* cancel
+	// (e.g. a new prompt on the same connection) are left alone.
+	c.pendingMu.Lock()
+	pendingIDs := make([]uint64, 0, len(c.pending))
+	for id := range c.pending {
+		pendingIDs = append(pendingIDs, id)
+	}
+	c.pendingMu.Unlock()
+
+	notif := NewJsonRpcNotification("session/cancel", map[string]interface{}{
+		"sessionId": c.SessionID,
+	})
+	data, err := json.Marshal(notif)
+	if err != nil {
+		return err
+	}
+	slog.Info("acp: sending session/cancel", "session_id", c.SessionID, "thread_key", c.ThreadKey, "pending", len(pendingIDs))
+	if err := c.sendRaw(string(data)); err != nil {
+		return err
+	}
+
+	if len(pendingIDs) > 0 {
+		go c.cancelWatchdog(pendingIDs, cancelWatchdogTimeout)
+	}
+	return nil
+}
+
+// cancelWatchdog waits for the given timeout then force-resolves any of
+// the specified pending request IDs that are still outstanding with a
+// synthetic response carrying stopReason="cancelled". The prompt
+// goroutine then returns normally and PromptDone releases promptMu.
+// The synthetic response is also forwarded to the notification
+// subscriber (if any) so the streaming loop actually wakes up to observe
+// it — the rx channel in streamPrompt is the subscriber, not the
+// pending map.
+func (c *AcpConnection) cancelWatchdog(pendingIDs []uint64, timeout time.Duration) {
+	time.Sleep(timeout)
+
+	synthetic := json.RawMessage(`{"stopReason":"cancelled"}`)
+	for _, id := range pendingIDs {
+		c.pendingMu.Lock()
+		ch, ok := c.pending[id]
+		if ok {
+			delete(c.pending, id)
+		}
+		c.pendingMu.Unlock()
+		if !ok {
+			continue
+		}
+		slog.Warn("acp: session/cancel watchdog firing — agent did not honor cancel",
+			"session_id", c.SessionID, "thread_key", c.ThreadKey, "request_id", id,
+			"timeout", timeout)
+		reqID := id
+		msg := &JsonRpcMessage{ID: &reqID, Result: &synthetic}
+
+		// Forward to notification subscriber first (the rx channel the
+		// streaming loop reads from) — if we only resolved the pending
+		// channel, the loop would miss the completion signal.
+		//
+		// Hold notifyMu across the entire send. Together with the
+		// invariant that pending[id] still existed one line above
+		// (i.e. streamPrompt for this id hasn't seen a response yet,
+		// so PromptDone cannot have cleared notifyCh), this guarantees
+		// the channel we send to is the one the live streamPrompt is
+		// reading — not a stale pointer left over from a prior prompt
+		// on the same connection. A 2s timeout bounds the watchdog
+		// goroutine's lifetime if the consumer has stopped reading
+		// (e.g. handler panicked).
+		c.notifyMu.Lock()
+		target := c.notifyCh
+		if target != nil {
+			if watchdogPreSendHook != nil {
+				watchdogPreSendHook()
+			}
+			select {
+			case target <- msg:
+			case <-time.After(2 * time.Second):
+				slog.Error("acp: watchdog could not forward synthetic cancelled to notifyCh — stream may hang",
+					"session_id", c.SessionID, "thread_key", c.ThreadKey, "request_id", id)
+			}
+		}
+		c.notifyMu.Unlock()
+
+		ch <- msg
+	}
+}
+
 func (c *AcpConnection) Alive() bool {
 	return c.alive.Load()
 }

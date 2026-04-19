@@ -19,6 +19,11 @@ func TestParseCommand(t *testing.T) {
 		{"Resume", CmdResume, true},
 		{"RESUME", CmdResume, true},
 		{"info", CmdInfo, true},
+		{"stop", CmdStop, true},
+		{"Stop", CmdStop, true},
+		{"STOP", CmdStop, true},
+		{"cancel", CmdStop, true}, // alias → stop
+		{"CANCEL", CmdStop, true},
 		{"sessions extra args", CmdSessions, true},
 		{"hello world", "", false},
 		{"", "", false},

@@ -5,6 +5,7 @@
 
 # CI / tooling
 .claude
+.kiro
 .tmp
 scripts/
 
@@ -22,14 +23,28 @@ Dockerfile.*
 quill
 *.exe
 
+# Go test artifacts
+*.test
+coverage.out
+coverage.html
+*.cover
+
 # Config secrets & local overrides
 config.toml
 config.toml.local
 *.output
+.env
+.env.*
 
-# Example / deployment
+# Example / deployment (runtime image doesn't need Helm charts or sample data)
 example/
+deploy/
+
+# Teams packaging assets (JSON/PNG for Developer Portal upload — not needed at runtime)
+teams/appmanifest/
 
 # Editor / OS
+.vscode/
+.idea/
 *.swp
 .DS_Store

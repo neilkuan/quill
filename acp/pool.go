@@ -138,6 +138,26 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 	return nil
 }
 
+// Connection returns the active connection for a thread, or nil if none
+// exists. The returned pointer is safe to retain — connections are not
+// mutated after creation, and callers must gate use on conn.Alive().
+// Useful when a handler needs to capture the specific connection that
+// owns a prompt (e.g. for cancel routing) without holding the pool lock
+// across a long-running operation.
+//
+// Race note: the pool may evict or replace this connection after the
+// RLock is released, but that is by design — the returned pointer
+// pins the original object (GC keeps it alive while the caller holds
+// the pointer), and Kill()/LRU eviction flips alive to false. So a
+// later conn.SessionCancel() on a captured stale pointer cleanly
+// errors out with "connection not alive" rather than mis-cancelling a
+// freshly-spawned connection on the same threadKey.
+func (p *SessionPool) Connection(threadKey string) *AcpConnection {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.connections[threadKey]
+}
+
 // WithConnection provides access to a connection. Caller must have called GetOrCreate first.
 func (p *SessionPool) WithConnection(threadID string, fn func(conn *AcpConnection) error) error {
 	p.mu.Lock()
@@ -318,6 +338,21 @@ func (p *SessionPool) ResumeSession(threadKey string) (bool, string) {
 	p.store.Touch(threadKey)
 	p.connections[threadKey] = conn
 	return true, fmt.Sprintf("🔄 Session restored! Continuing conversation from `%s`.", oldSessionID)
+}
+
+// CancelSession sends session/cancel to the agent for a specific thread.
+// Unlike KillSession, this preserves the connection and session ID — the
+// agent stops the active prompt and the pending session/prompt response
+// returns with stopReason="cancelled".
+// Returns an error if no connection exists for the thread.
+func (p *SessionPool) CancelSession(threadKey string) error {
+	p.mu.RLock()
+	conn, ok := p.connections[threadKey]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("no active session for %s", threadKey)
+	}
+	return conn.SessionCancel()
 }
 
 // Stats returns pool utilization.

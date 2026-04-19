@@ -37,6 +37,40 @@ type Handler struct {
 	// MarkdownTableMode controls how GFM tables in agent replies are rewritten
 	// before being sent to Discord. See markdown.TableMode for options.
 	MarkdownTableMode markdown.TableMode
+
+	// streamingMu guards streamingMsgs.
+	streamingMu sync.Mutex
+	// streamingMsgs maps a bot streaming message ID to the specific
+	// connection whose current prompt should be cancelled when the user
+	// taps 🛑. Using the connection pointer (not threadKey) means a stale
+	// entry cannot accidentally cancel a later prompt on the same thread
+	// — if the connection has since been evicted or replaced, the cancel
+	// targets the original (now dead) connection and is a no-op.
+	streamingMsgs map[string]*acp.AcpConnection
+}
+
+// registerStreamingMsg records a bot streaming message ID so reaction-triggered
+// cancels can find the owning connection.
+func (h *Handler) registerStreamingMsg(msgID string, conn *acp.AcpConnection) {
+	h.streamingMu.Lock()
+	defer h.streamingMu.Unlock()
+	if h.streamingMsgs == nil {
+		h.streamingMsgs = make(map[string]*acp.AcpConnection)
+	}
+	h.streamingMsgs[msgID] = conn
+}
+
+func (h *Handler) unregisterStreamingMsg(msgID string) {
+	h.streamingMu.Lock()
+	defer h.streamingMu.Unlock()
+	delete(h.streamingMsgs, msgID)
+}
+
+func (h *Handler) lookupStreamingMsg(msgID string) (*acp.AcpConnection, bool) {
+	h.streamingMu.Lock()
+	defer h.streamingMu.Unlock()
+	conn, ok := h.streamingMsgs[msgID]
+	return conn, ok
 }
 
 func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -319,7 +353,23 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	)
 	reactions.SetQueued()
 
-	finalText, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
+	// Track the streaming message by connection pointer so 🛑 reactions
+	// route to the exact prompt that was running at registration time.
+	// Only drop the 🛑 reaction when reactions are enabled — otherwise the
+	// bot would leave emoji noise even when the user asked for a clean UI.
+	if conn := h.Pool.Connection(threadKey); conn != nil {
+		h.registerStreamingMsg(thinkingMsg.ID, conn)
+		defer h.unregisterStreamingMsg(thinkingMsg.ID)
+		if h.ReactionsConfig.Enabled {
+			go func() {
+				if err := s.MessageReactionAdd(threadID, thinkingMsg.ID, "🛑"); err != nil {
+					slog.Debug("failed to add cancel reaction", "error", err)
+				}
+			}()
+		}
+	}
+
+	finalText, cancelled, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
 
 	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
@@ -333,14 +383,18 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	if result == nil {
+	switch {
+	case cancelled:
+		reactions.SetCancelled()
+	case result == nil:
 		reactions.SetDone()
-	} else {
+	default:
 		reactions.SetError()
 	}
 
 	// TTS: synthesize voice reply only when the user sent a voice message
-	if result == nil && h.Synthesizer != nil && finalText != "" && hasAudio {
+	// (skip if cancelled — the text is partial).
+	if result == nil && !cancelled && h.Synthesizer != nil && finalText != "" && hasAudio {
 		go h.sendVoiceReply(s, threadID, m.Author.ID, finalText)
 	}
 
@@ -386,6 +440,29 @@ func (h *Handler) OnResumed(s *discordgo.Session, r *discordgo.Resumed) {
 	slog.Info("🔄 discord gateway resumed")
 }
 
+// OnMessageReactionAdd fires when any user adds a reaction. When the
+// reaction is 🛑 on one of our currently-streaming bot messages, route
+// it to SessionCancel on the exact connection that owned the prompt.
+// The bot's own initial 🛑 reaction is ignored via the author check.
+func (h *Handler) OnMessageReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
+	if s.State.User != nil && r.UserID == s.State.User.ID {
+		return
+	}
+	if r.Emoji.Name != "🛑" {
+		return
+	}
+	conn, ok := h.lookupStreamingMsg(r.MessageID)
+	if !ok || conn == nil {
+		return
+	}
+	slog.Info("discord cancel via reaction",
+		"user_id", r.UserID, "message_id", r.MessageID,
+		"session_id", conn.SessionID, "thread_key", conn.ThreadKey)
+	if err := conn.SessionCancel(); err != nil {
+		slog.Debug("cancel via reaction failed", "thread_key", conn.ThreadKey, "error", err)
+	}
+}
+
 // slashCommands defines the Discord Application Commands to register.
 var slashCommands = []*discordgo.ApplicationCommand{
 	{
@@ -403,6 +480,10 @@ var slashCommands = []*discordgo.ApplicationCommand{
 	{
 		Name:        "resume",
 		Description: "Attempt to restore a previous session for this thread",
+	},
+	{
+		Name:        "stop",
+		Description: "Interrupt the agent's current reply (session kept alive)",
 	},
 }
 
@@ -442,6 +523,9 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	case command.CmdResume:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteResume(h.Pool, threadKey)
+	case command.CmdStop:
+		threadKey := buildSessionKey(i.ChannelID)
+		response = command.ExecuteStop(h.Pool, threadKey)
 	default:
 		return
 	}
@@ -464,8 +548,9 @@ func streamPrompt(
 	reactions *StatusReactionController,
 	tableMode markdown.TableMode,
 	toolDisplay string,
-) (string, error) {
+) (string, bool, error) {
 	var finalText string
+	var cancelled bool
 	err := pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
 		rx, _, reset, resumed, err := conn.SessionPrompt(content)
 		if err != nil {
@@ -525,6 +610,17 @@ func streamPrompt(
 			if notification.ID != nil {
 				if notification.Error != nil {
 					promptErr = notification.Error
+				} else {
+					reason := acp.StopReason(notification)
+					if reason == "cancelled" {
+						cancelled = true
+					}
+					if reason != "" {
+						slog.Info("acp: prompt completed",
+							"thread_key", conn.ThreadKey,
+							"session_id", conn.SessionID,
+							"stop_reason", reason)
+					}
 				}
 				break
 			}
@@ -599,7 +695,13 @@ func streamPrompt(
 		finalText = textBuf.String()
 		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
-			finalContent = "_(no response)_"
+			if cancelled {
+				finalContent = "🛑 _已取消_"
+			} else {
+				finalContent = "_(no response)_"
+			}
+		} else if cancelled {
+			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
 		// Rewrite GFM tables before splitting — Discord ignores table syntax,
 		// so we wrap them in fenced code blocks (or convert to bullets) for
@@ -617,7 +719,7 @@ func streamPrompt(
 
 		return nil
 	})
-	return finalText, err
+	return finalText, cancelled, err
 }
 
 func buildSessionKey(threadID string) string {

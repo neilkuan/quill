@@ -17,8 +17,9 @@
 - **語音訊息轉錄** — 透過 OpenAI Whisper API 轉錄語音訊息（Discord、Telegram & Teams）
 - **即時編輯串流** — Agent 工作時即時更新訊息（Discord: 1.5s、Telegram: 2s）
 - **Emoji 狀態反應** — 透過平台原生 reaction 顯示處理進度
+- **中途打斷回覆** — `/stop` 指令或 Discord 點擊 🛑 reaction 即可中斷；session 保留、上下文不會丟失（ACP `session/cancel` + watchdog 保底）
 - **Session Pool** — 每個討論串/聊天一個 CLI 程序，自動生命週期管理
-- **Session 管理** — Bot 指令（`sessions`/`reset`/`info`）、LRU 驅逐、HTTP API 監控
+- **Session 管理** — Bot 指令（`sessions`/`reset`/`info`/`resume`/`stop`）、LRU 驅逐、HTTP API 監控
 - **ACP 協定** — 基於 stdio 的 JSON-RPC
 - **Kubernetes 就緒** — 包含 Dockerfile 供容器化部署
 
@@ -46,6 +47,60 @@
 | ⚠️ Teams    | ✅ | ✅ | ✅ (STT) | **實驗 / Beta** |
 
 > ⚠️ **實驗性 / Beta：** **Microsoft Teams adapter** 與 **Helm chart**（`deploy/helm/quill`）仍在 beta 階段。介面、config key、chart values 可能在未來版本直接調整，恕不另行公告。生產環境請自行評估風險後使用。
+
+---
+
+##### 架構
+
+> 圖中標籤全部使用 ASCII，避免 CJK 字寬度不一致造成對齊跑位；各項中文說明列於圖下方。
+
+```
+  _________________                ___________________________                 ______________
+ |                 |   message    |                           |   JSON-RPC    |              |
+ |    Discord      |------------->|     Platform Adapter      |<------------->|  ACP Agent   |
+ |    Telegram     |<-------------|   (handler | reactions)   |     stdio     |  (subprocess)|
+ |   MS Teams      |   reply      |             |             |               |              |
+ |_________________|              |             v             |               |   kiro-cli   |
+                                  |   command.ParseCommand    |               |   claude-acp |
+                                  |  sessions | info | reset  |               |   codex-acp  |
+                                  |  resume   | stop (cancel) |               |   copilot    |
+                                  |             |             |               |______________|
+                                  |             v             |
+                                  |       SessionPool         |
+                                  |   LRU | TTL | per-thread  |
+                                  |             |             |
+                                  |             v             |
+                                  |      AcpConnection        |
+                                  |   prompt | cancel | wd    |
+                                  |___________________________|
+                                        |                |
+                              optional  |                |  optional
+                                        v                v
+                                  _____________     _____________
+                                 |             |   |             |
+                                 |   STT/TTS   |   |  HTTP API   |
+                                 |  (Whisper | |   |  (sessions  |
+                                 |   OpenAI |  |   |   health)   |
+                                 |   Gemini)   |   |_____________|
+                                 |_____________|
+```
+
+圖中術語對照：
+
+| 英文 | 中文 |
+|------|------|
+| `message` / `reply` | 訊息 / 回覆 |
+| `Platform Adapter` | 平台轉接層（Discord、Telegram、Teams） |
+| `command.ParseCommand` | 指令解析（slash / 純文字） |
+| `SessionPool` | Session 池（每個 thread 一個連線、LRU 淘汰、TTL 清理） |
+| `AcpConnection` | ACP 連線（`prompt` 送 prompt、`cancel` 送 session/cancel、`wd` 是 watchdog） |
+| `ACP Agent (subprocess)` | ACP Agent 子程序（kiro / claude-agent-acp / codex-acp / copilot） |
+| `STT/TTS` | 語音轉文字 / 文字轉語音（選配） |
+| `HTTP API` | HTTP 監控 API（選配） |
+
+**資料流**：使用者訊息 → platform adapter → command parser（slash / 純文字）→ SessionPool（每個 thread key 一個 AcpConnection）→ JSON-RPC over stdio → agent CLI 子程序。串流回覆循同一路徑逆向返回，每 1.5-2 秒寫回原本的 bot 訊息。
+
+**Cancel 路徑**：使用者 `/stop` 或 🛑 reaction → `AcpConnection.SessionCancel()` 於獨立 goroutine 送 `session/cancel` notification（不鎖 `promptMu`）。Agent 回 `stopReason="cancelled"`；若 agent 沒實作 cancel，10 秒 watchdog 會自行合成同樣的 response，串流永遠不會卡死。
 
 ---
 
@@ -180,6 +235,8 @@ api_key = "${OPENAI_API_KEY}"
 | `/sessions` | 列出所有活躍的 session 及統計資訊 |
 | `/info` | 顯示當前討論串/聊天的 session 詳情 |
 | `/reset` | 終止當前 session（下一則訊息會建立新的） |
+| `/resume` | 嘗試還原當前討論串的前一個 session |
+| `/stop` | 中斷 agent 當前的回覆（session 保留）。`cancel` 為同義指令。Discord 上點擊串流訊息的 🛑 reaction 效果相同。 |
 
 ###### HTTP API（選用）
 
@@ -312,7 +369,7 @@ quill/
 │   ├── connection.go    # 子程序管理、stdio JSON-RPC、自動授權
 │   └── pool.go          # Session pool：get-or-create、LRU 驅逐、閒置清理
 ├── command/
-│   └── command.go       # Bot 指令解析與執行（sessions/reset/info）
+│   └── command.go       # Bot 指令解析與執行（sessions/reset/info/resume/stop）
 ├── api/
 │   └── server.go        # HTTP API server，用於 session 監控
 ├── stt/

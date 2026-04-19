@@ -13,6 +13,7 @@ const (
 	CmdReset    = "reset"
 	CmdResume   = "resume"
 	CmdInfo     = "info"
+	CmdStop     = "stop"
 )
 
 type Command struct {
@@ -29,8 +30,12 @@ func ParseCommand(text string) (*Command, bool) {
 	}
 
 	name := strings.ToLower(parts[0])
+	// "cancel" is an alias for "stop" — same ACP intent (session/cancel).
+	if name == "cancel" {
+		name = CmdStop
+	}
 	known := map[string]bool{
-		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true,
+		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true,
 	}
 	if !known[name] {
 		return nil, false
@@ -150,6 +155,17 @@ func ExecuteReset(pool *acp.SessionPool, threadKey string) string {
 func ExecuteResume(pool *acp.SessionPool, threadKey string) string {
 	_, msg := pool.ResumeSession(threadKey)
 	return msg
+}
+
+// ExecuteStop sends session/cancel to the agent for this thread. The
+// current prompt stops producing output but the session (and its
+// conversation history) is preserved — the next message keeps the
+// context.
+func ExecuteStop(pool *acp.SessionPool, threadKey string) string {
+	if err := pool.CancelSession(threadKey); err != nil {
+		return "No active session to stop."
+	}
+	return "🛑 Stop signal sent — the agent should wrap up shortly."
 }
 
 func formatDuration(d time.Duration) string {
