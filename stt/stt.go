@@ -116,5 +116,5 @@ func (t *OpenAITranscriber) Transcribe(audioPath string) (string, error) {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	return result.Text, nil
+	return filterHallucinations(result.Text), nil
 }

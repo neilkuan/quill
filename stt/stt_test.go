@@ -258,5 +258,30 @@ func TestNewOpenAITranscriber_CustomValues(t *testing.T) {
 	}
 }
 
+func TestOpenAITranscriber_Transcribe_FiltersHallucinations(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(whisperResponse{Text: "字幕由 Amara.org 社區提供"})
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	audioPath := filepath.Join(tmpDir, "test.ogg")
+	os.WriteFile(audioPath, []byte("fake-audio"), 0644)
+
+	transcriber := NewOpenAITranscriber(OpenAIConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	})
+
+	text, err := transcriber.Transcribe(audioPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "" {
+		t.Errorf("expected empty string after filtering hallucination, got %q", text)
+	}
+}
+
 // Verify Transcriber interface is satisfied
 var _ Transcriber = (*OpenAITranscriber)(nil)
