@@ -79,7 +79,7 @@
                                   _____________     _____________
                                  |             |   |             |
                                  |   STT/TTS   |   |  HTTP API   |
-                                 |  (Whisper | |   |  (sessions |
+                                 |  (Whisper | |   |  (sessions  |
                                  |   OpenAI |  |   |   health)   |
                                  |   Gemini)   |   |_____________|
                                  |_____________|
