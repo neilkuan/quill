@@ -40,7 +40,10 @@ func ParseCommand(text string) (*Command, bool) {
 	}
 	// "history" / "pick" are aliases for "session-picker", for people
 	// who prefer a shorter phrase at the chat prompt.
-	if name == "history" || name == "pick" {
+	// "session_picker" is the Telegram-friendly spelling — Telegram's
+	// SetMyCommands rejects hyphens (name must match ^[a-z][a-z0-9_]{0,31}$),
+	// so the /-menu entry uses an underscore and we normalise here.
+	if name == "history" || name == "pick" || name == "session_picker" {
 		name = CmdPicker
 	}
 	known := map[string]bool{

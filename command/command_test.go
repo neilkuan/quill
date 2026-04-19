@@ -29,8 +29,10 @@ func TestParseCommand(t *testing.T) {
 		{"CANCEL", CmdStop, true},
 		{"session-picker", CmdPicker, true},
 		{"Session-Picker", CmdPicker, true},
-		{"history", CmdPicker, true},      // alias → session-picker
-		{"pick", CmdPicker, true},         // alias → session-picker
+		{"history", CmdPicker, true},         // alias → session-picker
+		{"pick", CmdPicker, true},            // alias → session-picker
+		{"session_picker", CmdPicker, true},  // Telegram-friendly spelling (no hyphen)
+		{"Session_Picker", CmdPicker, true},
 		{"pick 3", CmdPicker, true},       // alias with numeric arg
 		{"history load abc", CmdPicker, true}, // alias with load subcommand
 		{"sessions extra args", CmdSessions, true},

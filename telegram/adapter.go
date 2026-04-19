@@ -133,7 +133,11 @@ func (a *Adapter) Start() error {
 			{Command: "reset", Description: "Reset the current session"},
 			{Command: "resume", Description: "Attempt to restore a previous session for this chat"},
 			{Command: "stop", Description: "Interrupt the agent's current reply (session kept alive)"},
-			{Command: "session-picker", Description: "Browse and load historical agent sessions"},
+			// Telegram command names must match ^[a-z][a-z0-9_]{0,31}$,
+			// so hyphens are rejected and the entry silently disappears
+			// from the /-menu. Use an underscore here; ParseCommand
+			// aliases `session_picker` to CmdPicker for text routing.
+			{Command: "session_picker", Description: "Browse and load historical agent sessions"},
 		},
 	})
 	if err != nil {
