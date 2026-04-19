@@ -20,6 +20,7 @@ import (
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/markdown"
+	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
 )
@@ -42,7 +43,7 @@ type Adapter struct {
 	consecutiveErrors atomic.Int64
 }
 
-func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig) (*Adapter, error) {
+func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker) (*Adapter, error) {
 	allowed := make(map[int64]bool, len(cfg.AllowedChats))
 	for _, id := range cfg.AllowedChats {
 		allowed[id] = true
@@ -72,6 +73,7 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber st
 		Synthesizer:       synthesizer,
 		TTSConfig:         ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
+		Picker:            picker,
 	}
 
 	a := &Adapter{
@@ -131,6 +133,7 @@ func (a *Adapter) Start() error {
 			{Command: "reset", Description: "Reset the current session"},
 			{Command: "resume", Description: "Attempt to restore a previous session for this chat"},
 			{Command: "stop", Description: "Interrupt the agent's current reply (session kept alive)"},
+			{Command: "session-picker", Description: "Browse and load historical agent sessions"},
 		},
 	})
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/markdown"
+	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
 )
@@ -27,7 +28,7 @@ type Adapter struct {
 	listen     string
 }
 
-func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig) (*Adapter, error) {
+func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker) (*Adapter, error) {
 	auth := NewBotAuth(cfg.AppID, cfg.AppSecret, cfg.TenantID)
 	client := NewBotClient(auth)
 
@@ -62,6 +63,7 @@ func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.T
 		TTSConfig:         ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
 		ToolDisplay:       toolDisplay,
+		Picker:            picker,
 	}
 
 	mux := buildMux(auth, handler)

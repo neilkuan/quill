@@ -243,6 +243,7 @@ api_key = "${OPENAI_API_KEY}"
 | `/reset` | 終止當前 session（下一則訊息會建立新的） |
 | `/resume` | 嘗試還原當前討論串的前一個 session |
 | `/stop` | 中斷 agent 當前的回覆（session 保留）。`cancel` 為同義指令。Discord 上點擊串流訊息的 🛑 reaction 效果相同。 |
+| `/session-picker` | 瀏覽並載入歷史 agent session。無參數時列出當前 cwd 範圍內最近的 session。`/session-picker <N>` 載入前一次列表的第 N 筆；`/session-picker load <id>` 依 session ID 直接載入；`/session-picker all` 跳過 cwd 過濾（適用於 Codex 等無 cwd 欄位的 agent）。`history` 和 `pick` 為同義指令。 |
 
 ###### HTTP API（選用）
 
@@ -266,9 +267,9 @@ listen = ":8080"
 - **TTL 清理** — 閒置超過 `session_ttl_hours`（預設 24 小時）的 session 會被清理
 - **逐 session 統計** — 建立時間、最後活動時間、訊息數
 
-###### Session 歷史紀錄（開發中的 `/session-picker`）
+###### Session 歷史紀錄（`/session-picker`）
 
-規劃中的 `/session-picker` 指令讓使用者能直接在聊天平台瀏覽並恢復 agent 的歷史 session。Picker 直接讀取 agent 寫在本機的 session 檔，agent 程序不需要在線：
+`/session-picker` 指令讓使用者能直接在聊天平台瀏覽並恢復 agent 的歷史 session。Picker 直接讀取 agent 寫在本機的 session 檔，agent 程序不需要在線：
 
 | Agent | Session 儲存位置 | cwd 過濾 |
 |---|---|---|

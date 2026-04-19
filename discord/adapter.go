@@ -7,6 +7,7 @@ import (
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/markdown"
+	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
 )
@@ -16,7 +17,7 @@ type Adapter struct {
 	session *discordgo.Session
 }
 
-func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig) (*Adapter, error) {
+func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker) (*Adapter, error) {
 	dg, err := discordgo.New("Bot " + cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -47,6 +48,7 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 		Synthesizer:       synthesizer,
 		TTSConfig:         ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
+		Picker:            picker,
 	}
 
 	// IntentsGuildMessageReactions is required for OnMessageReactionAdd

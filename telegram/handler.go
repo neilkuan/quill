@@ -20,6 +20,7 @@ import (
 	"github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/platform"
+	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
 )
@@ -39,7 +40,10 @@ type Handler struct {
 	// MarkdownTableMode controls how GFM tables in agent replies are rewritten
 	// before being sent to Telegram. See markdown.TableMode for options.
 	MarkdownTableMode markdown.TableMode
-	botUser           *models.User
+	// Picker lists historical sessions for /session-picker. Nil when
+	// the configured agent backend is not recognised by sessionpicker.Detect.
+	Picker  sessionpicker.Picker
+	botUser *models.User
 }
 
 func (h *Handler) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -413,6 +417,9 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 	case command.CmdStop:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		response = command.ExecuteStop(h.Pool, sessionKey)
+	case command.CmdPicker:
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
+		response = command.ExecutePicker(h.Pool, h.Picker, sessionKey, cmd.Args, h.Pool.WorkingDir())
 	default:
 		return
 	}

@@ -32,6 +32,13 @@ func (p *SessionPool) WorkingDir() string {
 	return p.workingDir
 }
 
+// Command returns the agent binary path configured for this pool.
+// The sessionpicker package uses this to pick the matching backend
+// when listing historical sessions.
+func (p *SessionPool) Command() string {
+	return p.command
+}
+
 func NewSessionPool(command string, args []string, workingDir string, env map[string]string, maxSessions int) *SessionPool {
 	store, err := NewSessionStore(workingDir)
 	if err != nil {
@@ -338,6 +345,85 @@ func (p *SessionPool) ResumeSession(threadKey string) (bool, string) {
 	p.store.Touch(threadKey)
 	p.connections[threadKey] = conn
 	return true, fmt.Sprintf("🔄 Session restored! Continuing conversation from `%s`.", oldSessionID)
+}
+
+// LoadSessionForThread kills any existing connection for threadKey,
+// spawns a fresh agent process, and asks the agent to load the given
+// session ID via ACP session/load. The loaded session takes over the
+// thread — subsequent prompts reuse its conversation history.
+//
+// cwd is the working directory to report in session/load; when empty,
+// the pool's default working_dir is used. Picker callers should pass
+// the session's original cwd so agents that verify session-to-cwd
+// binding (e.g. claude-agent-acp) accept the load.
+//
+// Behaviour on failure mirrors ResumeSession: if the agent does not
+// advertise loadSession, or session/load returns an error, we fall
+// back to session/new so the thread is not left in a broken state.
+// The returned message tells the caller which branch ran.
+func (p *SessionPool) LoadSessionForThread(threadKey, sessionID, cwd string) (bool, string) {
+	if sessionID == "" {
+		return false, "Session ID is required."
+	}
+	if cwd == "" {
+		cwd = p.workingDir
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if conn, ok := p.connections[threadKey]; ok {
+		conn.Kill()
+		delete(p.connections, threadKey)
+	}
+
+	conn, err := SpawnConnection(p.command, p.args, p.workingDir, p.env, threadKey)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to start agent: `%v`", err)
+	}
+	if err := conn.Initialize(); err != nil {
+		conn.Kill()
+		return false, fmt.Sprintf("Agent initialization failed: `%v`", err)
+	}
+
+	if !conn.CanLoadSession {
+		if _, err := conn.SessionNew(p.workingDir); err != nil {
+			conn.Kill()
+			return false, fmt.Sprintf("Agent does not support loadSession and new session failed: `%v`", err)
+		}
+		if p.store != nil {
+			if saveErr := p.store.Save(threadKey, conn.SessionID); saveErr != nil {
+				slog.Warn("failed to persist session ID", "thread_key", threadKey, "error", saveErr)
+			}
+		}
+		p.connections[threadKey] = conn
+		return false, fmt.Sprintf("Agent does not support session resume (`loadSession` capability not advertised). A fresh session has been started instead of loading `%s`.", sessionID)
+	}
+
+	if err := conn.SessionLoad(sessionID, cwd); err != nil {
+		slog.Warn("picker session/load failed, falling back to new session",
+			"thread_key", threadKey, "session_id", sessionID, "error", err)
+		if _, newErr := conn.SessionNew(p.workingDir); newErr != nil {
+			conn.Kill()
+			return false, fmt.Sprintf("Load failed (`%v`) and new session also failed: `%v`", err, newErr)
+		}
+		if p.store != nil {
+			if saveErr := p.store.Save(threadKey, conn.SessionID); saveErr != nil {
+				slog.Warn("failed to persist session ID", "thread_key", threadKey, "error", saveErr)
+			}
+		}
+		p.connections[threadKey] = conn
+		return false, fmt.Sprintf("Could not load session `%s`: `%v`\n\nA fresh session has been started.", sessionID, err)
+	}
+
+	if p.store != nil {
+		if err := p.store.Save(threadKey, sessionID); err != nil {
+			slog.Warn("failed to persist loaded session ID", "thread_key", threadKey, "error", err)
+		}
+	}
+	p.connections[threadKey] = conn
+	slog.Info("session loaded via picker", "thread_key", threadKey, "session_id", sessionID)
+	return true, fmt.Sprintf("✅ Session `%s` loaded — continue the conversation by sending a message.", sessionID)
 }
 
 // CancelSession sends session/cancel to the agent for a specific thread.

@@ -13,6 +13,7 @@ import (
 	appconfig "github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/discord"
 	"github.com/neilkuan/quill/platform"
+	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/teams"
 	"github.com/neilkuan/quill/telegram"
@@ -112,12 +113,23 @@ func main() {
 		}
 	}
 
+	// Resolve a session picker for the configured agent binary. Nil
+	// when the binary is unknown — handlers treat a nil picker as
+	// "session-picker not available" and respond with a friendly
+	// message instead of crashing.
+	picker, pickerOK := sessionpicker.Detect(cfg.Agent.Command)
+	if pickerOK {
+		slog.Info("session picker enabled", "agent_type", picker.AgentType())
+	} else {
+		slog.Info("session picker not available for this agent", "agent_cmd", cfg.Agent.Command)
+	}
+
 	// Build platforms
 	var platforms []platform.Platform
 	var healthChecks []api.HealthCheck
 
 	if cfg.Discord.Enabled {
-		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, cfg.TTS, cfg.Markdown)
+		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, cfg.TTS, cfg.Markdown, picker)
 		if err != nil {
 			slog.Error("failed to create discord adapter", "error", err)
 			os.Exit(1)
@@ -130,7 +142,7 @@ func main() {
 	}
 
 	if cfg.Telegram.Enabled {
-		adapter, err := telegram.NewAdapter(cfg.Telegram, pool, t, synth, cfg.TTS, cfg.Markdown)
+		adapter, err := telegram.NewAdapter(cfg.Telegram, pool, t, synth, cfg.TTS, cfg.Markdown, picker)
 		if err != nil {
 			slog.Error("failed to create telegram adapter", "error", err)
 			os.Exit(1)
@@ -143,7 +155,7 @@ func main() {
 	}
 
 	if cfg.Teams.Enabled {
-		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown)
+		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown, picker)
 		if err != nil {
 			slog.Error("failed to create teams adapter", "error", err)
 			os.Exit(1)

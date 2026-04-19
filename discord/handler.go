@@ -19,6 +19,7 @@ import (
 	"github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/platform"
+	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
 )
@@ -37,6 +38,9 @@ type Handler struct {
 	// MarkdownTableMode controls how GFM tables in agent replies are rewritten
 	// before being sent to Discord. See markdown.TableMode for options.
 	MarkdownTableMode markdown.TableMode
+	// Picker lists historical sessions for /session-picker. Nil when
+	// the configured agent backend is not recognised by sessionpicker.Detect.
+	Picker sessionpicker.Picker
 
 	// streamingMu guards streamingMsgs.
 	streamingMu sync.Mutex
@@ -485,6 +489,18 @@ var slashCommands = []*discordgo.ApplicationCommand{
 		Name:        "stop",
 		Description: "Interrupt the agent's current reply (session kept alive)",
 	},
+	{
+		Name:        "session-picker",
+		Description: "Browse and load historical agent sessions. Use `/session-picker <N>` or `/session-picker all`.",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "args",
+				Description: "Empty to list, `<N>` to load by index, `load <id>` for direct load, `all` to skip cwd filter",
+				Required:    false,
+			},
+		},
+	},
 }
 
 func (h *Handler) registerSlashCommands(s *discordgo.Session, appID string) {
@@ -526,6 +542,16 @@ func (h *Handler) OnInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	case command.CmdStop:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteStop(h.Pool, threadKey)
+	case command.CmdPicker:
+		threadKey := buildSessionKey(i.ChannelID)
+		args := ""
+		for _, opt := range data.Options {
+			if opt.Name == "args" {
+				args = opt.StringValue()
+				break
+			}
+		}
+		response = command.ExecutePicker(h.Pool, h.Picker, threadKey, args, h.Pool.WorkingDir())
 	default:
 		return
 	}
