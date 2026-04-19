@@ -1665,7 +1665,7 @@ func (a *Adapter) Start() error {
 	}
 
 	a.healthy.Store(true)
-	slog.Info("starting teams adapter", "listen", a.listen)
+	slog.Info("✅ starting teams adapter ✅", "listen", a.listen)
 
 	go func() {
 		if err := a.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {

@@ -417,7 +417,7 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 func (h *Handler) OnReady(s *discordgo.Session, r *discordgo.Ready) {
 	slog.Info("✅ discord bot connected",
-		"user", r.User.Username,
+		"user", "🤖"+r.User.Username+"🤖",
 		"user_id", r.User.ID,
 		"session_id", r.SessionID,
 		"guilds", len(r.Guilds),

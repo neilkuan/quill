@@ -56,7 +56,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
-	slog.Info("stopping api server")
+	slog.Info("🛑 stopping api server 🛑")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)

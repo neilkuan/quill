@@ -13,9 +13,9 @@ import (
 	appconfig "github.com/neilkuan/quill/config"
 	"github.com/neilkuan/quill/discord"
 	"github.com/neilkuan/quill/platform"
+	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/teams"
 	"github.com/neilkuan/quill/telegram"
-	"github.com/neilkuan/quill/stt"
 	"github.com/neilkuan/quill/tts"
 )
 
@@ -213,5 +213,5 @@ func main() {
 		}
 	}
 	pool.Shutdown()
-	slog.Info("quill shut down")
+	slog.Info("🦆 quill shut down 🦆🦆🦆")
 }

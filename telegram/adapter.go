@@ -121,7 +121,7 @@ func (a *Adapter) Start() error {
 		return err
 	}
 	a.handler.botUser = me
-	slog.Info("starting telegram adapter", "bot", me.Username)
+	slog.Info("✅ starting telegram adapter ✅", "bot", "🤖"+me.Username+"🤖")
 
 	// Register bot commands for the / menu
 	_, err = a.b.SetMyCommands(ctx, &bot.SetMyCommandsParams{
@@ -176,7 +176,7 @@ func (a *Adapter) supervise() {
 }
 
 func (a *Adapter) Stop() error {
-	slog.Info("stopping telegram adapter")
+	slog.Info("🛑 stopping telegram adapter 🛑")
 	a.mu.Lock()
 	a.stopped = true
 	if a.cancel != nil {

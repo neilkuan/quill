@@ -38,14 +38,14 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 	}
 
 	h := &Handler{
-		Pool:             pool,
-		AllowedChannels:  allowed,
-		AllowedUserIDs:   allowedUsers,
-		AllowAnyUser:     allowAnyUser,
-		ReactionsConfig:  cfg.Reactions,
-		Transcriber:      transcriber,
-		Synthesizer:      synthesizer,
-		TTSConfig:        ttsCfg,
+		Pool:              pool,
+		AllowedChannels:   allowed,
+		AllowedUserIDs:    allowedUsers,
+		AllowAnyUser:      allowAnyUser,
+		ReactionsConfig:   cfg.Reactions,
+		Transcriber:       transcriber,
+		Synthesizer:       synthesizer,
+		TTSConfig:         ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
 	}
 
@@ -68,12 +68,12 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 }
 
 func (a *Adapter) Start() error {
-	slog.Info("starting discord adapter")
+	slog.Info("✅ starting discord adapter ✅")
 	return a.session.Open()
 }
 
 func (a *Adapter) Stop() error {
-	slog.Info("stopping discord adapter")
+	slog.Info("🛑 stopping discord adapter 🛑")
 	return a.session.Close()
 }
 

@@ -89,7 +89,7 @@ func (a *Adapter) Start() error {
 	}
 
 	a.healthy.Store(true)
-	slog.Info("starting teams adapter", "listen", a.listen)
+	slog.Info("✅ starting teams adapter ✅", "listen", a.listen)
 
 	go func() {
 		if err := a.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -102,7 +102,7 @@ func (a *Adapter) Start() error {
 }
 
 func (a *Adapter) Stop() error {
-	slog.Info("stopping teams adapter")
+	slog.Info("🛑 stopping teams adapter 🛑")
 	a.healthy.Store(false)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
