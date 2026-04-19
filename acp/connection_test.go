@@ -264,6 +264,11 @@ func TestAcpConnection_SessionCancel_WatchdogFires(t *testing.T) {
 // the consumer to drain one slot instead of silently dropping the
 // synthetic cancelled response. Without this behavior the streaming
 // loop (which reads from notifyCh, not the pending channel) would hang.
+//
+// The test is deterministic: only one goroutine reads from notifyCh, so
+// the order is guaranteed — the filler is read first (from the buffer),
+// which frees a slot, which unblocks the watchdog's send, which then
+// puts the cancelled response into the slot the test reads next.
 func TestAcpConnection_SessionCancel_WatchdogBlocksBriefly(t *testing.T) {
 	origTimeout := cancelWatchdogTimeout
 	cancelWatchdogTimeout = 20 * time.Millisecond
@@ -294,34 +299,27 @@ func TestAcpConnection_SessionCancel_WatchdogBlocksBriefly(t *testing.T) {
 		t.Fatalf("SessionCancel returned error: %v", err)
 	}
 
-	// Drain the filler shortly after the watchdog fires — this unblocks
-	// the watchdog's blocking send so the synthetic cancelled response
-	// lands on notifyCh.
-	go func() {
-		time.Sleep(40 * time.Millisecond)
-		<-notifyCh
-	}()
+	// Let the watchdog fire and start blocking on its send.
+	time.Sleep(40 * time.Millisecond)
 
-	// The synthetic cancelled response must still reach notifyCh — not
-	// be dropped — within a bounded time.
-	deadline := time.After(1 * time.Second)
-	var got *JsonRpcMessage
-readLoop:
-	for {
-		select {
-		case m := <-notifyCh:
-			if StopReason(m) == "cancelled" {
-				got = m
-				break readLoop
-			}
-			// Skip anything else (e.g. if the filler wasn't drained
-			// before the real message — unlikely given the timing).
-		case <-deadline:
-			t.Fatal("watchdog did not deliver cancelled to notifyCh despite room appearing")
-		}
+	// First receive must get the filler (it was in the buffer first,
+	// and the watchdog's send is currently blocked behind a full
+	// buffer — Go delivers buffered items before handoff from blocked
+	// senders).
+	first := <-notifyCh
+	if StopReason(first) == "cancelled" {
+		t.Fatal("got cancelled before filler — test ordering assumption broken")
 	}
-	if got == nil || StopReason(got) != "cancelled" {
-		t.Fatalf("expected cancelled on notifyCh, got %+v", got)
+
+	// With one slot now free, the watchdog's send unblocks and places
+	// the synthetic cancelled response into the buffer.
+	select {
+	case m := <-notifyCh:
+		if StopReason(m) != "cancelled" {
+			t.Fatalf("expected cancelled on notifyCh after drain, got %+v", m)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("watchdog did not deliver cancelled to notifyCh despite room appearing")
 	}
 }
 

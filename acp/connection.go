@@ -493,16 +493,17 @@ func (c *AcpConnection) cancelWatchdog(pendingIDs []uint64, timeout time.Duratio
 		// streaming loop reads from) — if we only resolved the pending
 		// channel, the loop would miss the completion signal.
 		//
-		// Use a bounded blocking send rather than non-blocking select
-		// default: if notifyCh's 256-slot buffer is full, dropping the
-		// synthetic response defeats the entire purpose of the watchdog
-		// (the loop would never see completion and hang forever). A
-		// blocking send with timeout gives the consumer time to drain
-		// while still bounding the watchdog goroutine's lifetime.
+		// Hold notifyMu across the entire send. Together with the
+		// invariant that pending[id] still existed one line above
+		// (i.e. streamPrompt for this id hasn't seen a response yet,
+		// so PromptDone cannot have cleared notifyCh), this guarantees
+		// the channel we send to is the one the live streamPrompt is
+		// reading — not a stale pointer left over from a prior prompt
+		// on the same connection. A 2s timeout bounds the watchdog
+		// goroutine's lifetime if the consumer has stopped reading
+		// (e.g. handler panicked).
 		c.notifyMu.Lock()
 		target := c.notifyCh
-		c.notifyMu.Unlock()
-
 		if target != nil {
 			select {
 			case target <- msg:
@@ -511,6 +512,7 @@ func (c *AcpConnection) cancelWatchdog(pendingIDs []uint64, timeout time.Duratio
 					"session_id", c.SessionID, "thread_key", c.ThreadKey, "request_id", id)
 			}
 		}
+		c.notifyMu.Unlock()
 
 		ch <- msg
 	}
