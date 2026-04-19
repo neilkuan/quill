@@ -251,6 +251,19 @@ listen = ":8080"
 - **TTL cleanup** — idle sessions are cleaned up after `session_ttl_hours` (default: 24h)
 - **Per-session stats** — created time, last active, message count
 
+###### Session History (upcoming `/session-picker`)
+
+A `/session-picker` command is being built so users can browse and resume an agent's historical sessions directly from chat. The picker reads each agent's on-disk session store — the agent process does not need to be running:
+
+| Agent | Session storage | cwd filter |
+|---|---|---|
+| Kiro CLI | `~/.kiro/sessions/cli/<uuid>.{json,jsonl}` | ✅ |
+| Claude Code | `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` | ✅ |
+| GitHub Copilot CLI | `~/.copilot/session-state/<uuid>/` (`workspace.yaml` + `events.jsonl`) | ✅ (best-effort from `workspace.yaml`) |
+| Codex | `~/.codex/history.jsonl` (flat index) | ❌ — Codex's history entries carry no cwd, so the picker lists every session and silently ignores any cwd argument |
+
+When Codex sessions are displayed, the picker UI will surface a note about the missing cwd filter so the result set is not mistaken for a narrower scope.
+
 ---
 
 ##### Platform Comparison
