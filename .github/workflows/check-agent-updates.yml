@@ -64,6 +64,26 @@ jobs:
             fi
           }
 
+          check_kiro_cli() {
+            local current new
+            current=$(grep -oP 'KIRO_CLI_VERSION=\K[0-9.]+' Dockerfile || true)
+            if [ -z "$current" ]; then
+              echo "  kiro-cli: skipped (no KIRO_CLI_VERSION pin found)"
+              return
+            fi
+            # update-kiro-cli.sh resolves the latest version from AWS's manifest
+            # and rewrites the VERSION + per-arch SHA256 ARGs in place.
+            scripts/update-kiro-cli.sh >/dev/null
+            new=$(grep -oP 'KIRO_CLI_VERSION=\K[0-9.]+' Dockerfile || true)
+            if [ "$current" != "$new" ]; then
+              echo "  kiro-cli: ${current} → ${new}"
+              UPDATES="true"
+              SUMMARY="${SUMMARY}- \`kiro-cli\`: ${current} → ${new}\n"
+            else
+              echo "  kiro-cli: ${current} (up to date)"
+            fi
+          }
+
           echo "Checking npm packages..."
           check_npm "@zed-industries/codex-acp" "Dockerfile.codex"
           check_npm "@openai/codex" "Dockerfile.codex"
@@ -73,6 +93,9 @@ jobs:
 
           echo "Checking gh CLI..."
           check_gh_cli
+
+          echo "Checking kiro-cli..."
+          check_kiro_cli
 
           echo "has_updates=${UPDATES:-false}" >> "$GITHUB_OUTPUT"
 

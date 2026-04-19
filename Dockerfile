@@ -14,8 +14,14 @@ FROM public.ecr.aws/aws-cli/aws-cli:latest AS aws-source
 FROM debian:bookworm-slim
 
 ARG GH_CLI_VERSION=2.90.0
-# Change KIRO_CLI_CACHE_BUST to force re-download of kiro-cli (no versioned URL available)
-ARG KIRO_CLI_CACHE_BUST=2026-04-14
+# kiro-cli is pinned by version + SHA256. AWS publishes versioned URLs and
+# per-zip .sha256 files at https://desktop-release.q.us-east-1.amazonaws.com/<ver>/
+# and a manifest at /latest/manifest.json. To upgrade: run scripts/update-kiro-cli.sh
+# which rewrites these three ARGs. Pinning keeps this layer cacheable across
+# builds — it only invalidates when the pin is intentionally bumped.
+ARG KIRO_CLI_VERSION=2.0.1
+ARG KIRO_CLI_SHA256_AMD64=ea7ae1d68225a448db0f9753e501ec6f2dde917a6f4290831257b8a75f3ea340
+ARG KIRO_CLI_SHA256_ARM64=b2fc2104a1b0d8a690843b913ad234b8f2f7af58db762c31f58d431869af2fdd
 
 # Layer 1: stable system packages (rarely changes)
 # tini is needed as PID 1 so zombie children spawned by the agent (e.g.
@@ -25,14 +31,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl unzip procps git tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Layer 2: kiro-cli + gh CLI (cache invalidated by KIRO_CLI_CACHE_BUST)
+# Layer 2: kiro-cli + gh CLI (invalidated only when pinned versions/SHAs change)
 RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" = "arm64" ]; then \
-         KIRO_URL="https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-aarch64-linux.zip"; \
+         KIRO_ARCH="aarch64"; EXPECTED_SHA="${KIRO_CLI_SHA256_ARM64}"; \
        else \
-         KIRO_URL="https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-x86_64-linux.zip"; \
+         KIRO_ARCH="x86_64"; EXPECTED_SHA="${KIRO_CLI_SHA256_AMD64}"; \
        fi \
+    && KIRO_URL="https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${KIRO_ARCH}-linux.zip" \
     && curl --proto '=https' --tlsv1.2 -sSf --retry 3 --retry-delay 5 "$KIRO_URL" -o /tmp/kirocli.zip \
+    && echo "${EXPECTED_SHA}  /tmp/kirocli.zip" | sha256sum -c - \
     && unzip -q /tmp/kirocli.zip -d /tmp \
     && cp /tmp/kirocli/bin/* /usr/local/bin/ \
     && chmod +x /usr/local/bin/kiro-cli* \
