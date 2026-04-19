@@ -144,6 +144,14 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 // Useful when a handler needs to capture the specific connection that
 // owns a prompt (e.g. for cancel routing) without holding the pool lock
 // across a long-running operation.
+//
+// Race note: the pool may evict or replace this connection after the
+// RLock is released, but that is by design — the returned pointer
+// pins the original object (GC keeps it alive while the caller holds
+// the pointer), and Kill()/LRU eviction flips alive to false. So a
+// later conn.SessionCancel() on a captured stale pointer cleanly
+// errors out with "connection not alive" rather than mis-cancelling a
+// freshly-spawned connection on the same threadKey.
 func (p *SessionPool) Connection(threadKey string) *AcpConnection {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

@@ -259,6 +259,72 @@ func TestAcpConnection_SessionCancel_WatchdogFires(t *testing.T) {
 	}
 }
 
+// TestAcpConnection_SessionCancel_WatchdogBlocksBriefly verifies the
+// watchdog's bounded blocking send: when notifyCh is full, it waits for
+// the consumer to drain one slot instead of silently dropping the
+// synthetic cancelled response. Without this behavior the streaming
+// loop (which reads from notifyCh, not the pending channel) would hang.
+func TestAcpConnection_SessionCancel_WatchdogBlocksBriefly(t *testing.T) {
+	origTimeout := cancelWatchdogTimeout
+	cancelWatchdogTimeout = 20 * time.Millisecond
+	defer func() { cancelWatchdogTimeout = origTimeout }()
+
+	w := &fakeWriteCloser{}
+	// Notification channel with a tiny buffer, filled to capacity so the
+	// first send from the watchdog will block.
+	notifyCh := make(chan *JsonRpcMessage, 1)
+	filler := json.RawMessage(`{"filler":true}`)
+	notifyCh <- &JsonRpcMessage{Result: &filler}
+
+	conn := &AcpConnection{
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		stdin:     w,
+		SessionID: "sess_full",
+		notifyCh:  notifyCh,
+	}
+	conn.alive.Store(true)
+
+	respCh := make(chan *JsonRpcMessage, 1)
+	const pendingID uint64 = 11
+	conn.pendingMu.Lock()
+	conn.pending[pendingID] = respCh
+	conn.pendingMu.Unlock()
+
+	if err := conn.SessionCancel(); err != nil {
+		t.Fatalf("SessionCancel returned error: %v", err)
+	}
+
+	// Drain the filler shortly after the watchdog fires — this unblocks
+	// the watchdog's blocking send so the synthetic cancelled response
+	// lands on notifyCh.
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		<-notifyCh
+	}()
+
+	// The synthetic cancelled response must still reach notifyCh — not
+	// be dropped — within a bounded time.
+	deadline := time.After(1 * time.Second)
+	var got *JsonRpcMessage
+readLoop:
+	for {
+		select {
+		case m := <-notifyCh:
+			if StopReason(m) == "cancelled" {
+				got = m
+				break readLoop
+			}
+			// Skip anything else (e.g. if the filler wasn't drained
+			// before the real message — unlikely given the timing).
+		case <-deadline:
+			t.Fatal("watchdog did not deliver cancelled to notifyCh despite room appearing")
+		}
+	}
+	if got == nil || StopReason(got) != "cancelled" {
+		t.Fatalf("expected cancelled on notifyCh, got %+v", got)
+	}
+}
+
 // TestAcpConnection_SessionCancel_WatchdogSkipsResolvedIDs verifies the
 // watchdog is a no-op when the agent already responded normally before
 // the timeout fires — no double-resolve, no spurious cancelled messages.

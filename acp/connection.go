@@ -492,14 +492,25 @@ func (c *AcpConnection) cancelWatchdog(pendingIDs []uint64, timeout time.Duratio
 		// Forward to notification subscriber first (the rx channel the
 		// streaming loop reads from) — if we only resolved the pending
 		// channel, the loop would miss the completion signal.
+		//
+		// Use a bounded blocking send rather than non-blocking select
+		// default: if notifyCh's 256-slot buffer is full, dropping the
+		// synthetic response defeats the entire purpose of the watchdog
+		// (the loop would never see completion and hang forever). A
+		// blocking send with timeout gives the consumer time to drain
+		// while still bounding the watchdog goroutine's lifetime.
 		c.notifyMu.Lock()
-		if c.notifyCh != nil {
+		target := c.notifyCh
+		c.notifyMu.Unlock()
+
+		if target != nil {
 			select {
-			case c.notifyCh <- msg:
-			default:
+			case target <- msg:
+			case <-time.After(2 * time.Second):
+				slog.Error("acp: watchdog could not forward synthetic cancelled to notifyCh — stream may hang",
+					"session_id", c.SessionID, "thread_key", c.ThreadKey, "request_id", id)
 			}
 		}
-		c.notifyMu.Unlock()
 
 		ch <- msg
 	}
