@@ -52,12 +52,14 @@
 
 ##### 架構
 
+> 圖中標籤全部使用 ASCII，避免 CJK 字寬度不一致造成對齊跑位；各項中文說明列於圖下方。
+
 ```
   _________________                ___________________________                 ______________
- |                 |    訊息      |                           |   JSON-RPC    |              |
+ |                 |   message    |                           |   JSON-RPC    |              |
  |    Discord      |------------->|     Platform Adapter      |<------------->|  ACP Agent   |
- |    Telegram     |<-------------|   (handler | reactions)   |     stdio     |  (子程序)    |
- |   MS Teams      |    回覆      |             |             |               |              |
+ |    Telegram     |<-------------|   (handler | reactions)   |     stdio     |  (subprocess)|
+ |   MS Teams      |   reply      |             |             |               |              |
  |_________________|              |             v             |               |   kiro-cli   |
                                   |   command.ParseCommand    |               |   claude-acp |
                                   |  sessions | info | reset  |               |   codex-acp  |
@@ -65,27 +67,40 @@
                                   |             |             |               |______________|
                                   |             v             |
                                   |       SessionPool         |
-                                  |  LRU | TTL | 每 thread 一 |
+                                  |   LRU | TTL | per-thread  |
                                   |             |             |
                                   |             v             |
                                   |      AcpConnection        |
-                                  |  prompt | cancel | 看門狗 |
+                                  |   prompt | cancel | wd    |
                                   |___________________________|
                                         |                |
-                                 選配   |                |   選配
+                              optional  |                |  optional
                                         v                v
                                   _____________     _____________
                                  |             |   |             |
                                  |   STT/TTS   |   |  HTTP API   |
-                                 |  (Whisper | |   | (session 監 |
-                                 |   OpenAI |  |   |  控 & 健檢) |
+                                 |  (Whisper | |   |  (sessions |
+                                 |   OpenAI |  |   |   health)   |
                                  |   Gemini)   |   |_____________|
                                  |_____________|
 ```
 
-**資料流（文字說明）**：使用者訊息 → platform adapter → command parser（slash / 純文字）→ SessionPool（每個 thread key 一個 AcpConnection）→ JSON-RPC over stdio → agent CLI 子程序。串流回覆循同一路徑逆向返回，每 1.5-2 秒寫回原本的 bot 訊息。
+圖中術語對照：
 
-**Cancel 路徑**：使用者 `/stop` 或 🛑 reaction → `AcpConnection.SessionCancel()` 於獨立 goroutine 送 `session/cancel` notification（不鎖 promptMu）。Agent 回 `stopReason="cancelled"`；若 agent 沒實作 cancel，10 秒 watchdog 會自行合成同樣的 response，串流永遠不會卡死。
+| 英文 | 中文 |
+|------|------|
+| `message` / `reply` | 訊息 / 回覆 |
+| `Platform Adapter` | 平台轉接層（Discord、Telegram、Teams） |
+| `command.ParseCommand` | 指令解析（slash / 純文字） |
+| `SessionPool` | Session 池（每個 thread 一個連線、LRU 淘汰、TTL 清理） |
+| `AcpConnection` | ACP 連線（`prompt` 送 prompt、`cancel` 送 session/cancel、`wd` 是 watchdog） |
+| `ACP Agent (subprocess)` | ACP Agent 子程序（kiro / claude-agent-acp / codex-acp / copilot） |
+| `STT/TTS` | 語音轉文字 / 文字轉語音（選配） |
+| `HTTP API` | HTTP 監控 API（選配） |
+
+**資料流**：使用者訊息 → platform adapter → command parser（slash / 純文字）→ SessionPool（每個 thread key 一個 AcpConnection）→ JSON-RPC over stdio → agent CLI 子程序。串流回覆循同一路徑逆向返回，每 1.5-2 秒寫回原本的 bot 訊息。
+
+**Cancel 路徑**：使用者 `/stop` 或 🛑 reaction → `AcpConnection.SessionCancel()` 於獨立 goroutine 送 `session/cancel` notification（不鎖 `promptMu`）。Agent 回 `stopReason="cancelled"`；若 agent 沒實作 cancel，10 秒 watchdog 會自行合成同樣的 response，串流永遠不會卡死。
 
 ---
 
