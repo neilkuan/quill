@@ -1,6 +1,7 @@
 package sessionpicker
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,6 +110,33 @@ func TestCopilotPickerList_FilterAndLimit(t *testing.T) {
 	filtered, _ := p.List("/home/test/proj-copilot", 0)
 	if len(filtered) != 2 {
 		t.Fatalf("want 2 for proj-copilot (aaaa + bbbb), got %d", len(filtered))
+	}
+}
+
+// TestCopilotPickerList_LocalSmoke reads the real ~/.copilot/session-state
+// directory for manual verification. Skipped unless QUILL_PICKER_SMOKE=1.
+//
+//	QUILL_PICKER_SMOKE=1 go test ./sessionpicker/ -run CopilotPickerList_LocalSmoke -v
+func TestCopilotPickerList_LocalSmoke(t *testing.T) {
+	if os.Getenv("QUILL_PICKER_SMOKE") != "1" {
+		t.Skip("set QUILL_PICKER_SMOKE=1 to run against real ~/.copilot data")
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	p := NewCopilotPicker("")
+	sessions, err := p.List("", 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	t.Logf("found %d session(s), showing up to 10 newest:", len(sessions))
+	for i, s := range sessions {
+		t.Logf("  [%d] %s | %s | cwd=%s | title=%q",
+			i+1,
+			s.UpdatedAt.Format("2006-01-02 15:04"),
+			s.ID,
+			s.CWD,
+			s.Title,
+		)
 	}
 }
 
