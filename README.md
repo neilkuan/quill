@@ -17,8 +17,9 @@ This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (origi
 - **Voice message transcription** — transcribes voice messages via OpenAI Whisper API (Discord, Telegram & Teams)
 - **Real-time edit streaming** — updates messages as the agent works (Discord: 1.5s, Telegram: 2s)
 - **Emoji status reactions** — processing progress via platform-native reactions
+- **Interrupt mid-reply** — `/stop` command or tap-to-cancel 🛑 reaction on Discord; session stays alive, context preserved (ACP `session/cancel` with watchdog fallback)
 - **Session pool** — one CLI process per thread/chat, automatic lifecycle management
-- **Session management** — bot commands (`sessions`/`reset`/`info`), LRU eviction, HTTP API for monitoring
+- **Session management** — bot commands (`sessions`/`reset`/`info`/`resume`/`stop`), LRU eviction, HTTP API for monitoring
 - **ACP protocol** — JSON-RPC over stdio
 - **Kubernetes ready** — includes Dockerfile for containerized deployment
 
@@ -180,6 +181,8 @@ Commands are registered as native platform commands — Discord Slash Commands a
 | `/sessions` | List all active sessions with stats |
 | `/info` | Show current thread/chat session details |
 | `/reset` | Kill current session (new one on next message) |
+| `/resume` | Attempt to restore a previous session for this thread |
+| `/stop` | Interrupt the agent's current reply (session kept alive). `cancel` is an alias. On Discord, tapping the 🛑 reaction on a streaming message has the same effect. |
 
 ###### HTTP API (Optional)
 
@@ -312,7 +315,7 @@ quill/
 │   ├── connection.go    # Child process management, stdio JSON-RPC, auto-permission
 │   └── pool.go          # Session pool: get-or-create, LRU eviction, idle cleanup
 ├── command/
-│   └── command.go       # Bot command parsing and execution (sessions/reset/info)
+│   └── command.go       # Bot command parsing and execution (sessions/reset/info/resume/stop)
 ├── api/
 │   └── server.go        # HTTP API server for session monitoring
 ├── stt/
