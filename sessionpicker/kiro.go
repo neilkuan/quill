@@ -111,7 +111,7 @@ func loadKiroSession(path string) (Session, bool) {
 		updated = f.CreatedAt
 	}
 
-	title := strings.TrimSpace(stripSenderContext(f.Title))
+	title := strings.TrimSpace(stripQuillEnvelope(f.Title))
 	if looksLikeTruncatedSenderContext(f.Title) || title == "" {
 		// Kiro truncates the title to the first N characters of the
 		// stored prompt. When quill is the client, those first N chars
@@ -132,7 +132,7 @@ func loadKiroSession(path string) (Session, bool) {
 
 // looksLikeTruncatedSenderContext catches cases where Kiro only stored
 // the opening tag or part of it (e.g. "<sender_con…") so the
-// stripSenderContext helper alone cannot recover a useful title.
+// stripQuillEnvelope helper alone cannot recover a useful title.
 func looksLikeTruncatedSenderContext(s string) bool {
 	t := strings.TrimSpace(s)
 	if !strings.HasPrefix(t, "<") {
@@ -188,7 +188,7 @@ func recoverKiroTitleFromJSONL(jsonlPath string) (string, bool) {
 			if c.Kind != "text" || c.Data == "" {
 				continue
 			}
-			text := strings.TrimSpace(stripSenderContext(c.Data))
+			text := strings.TrimSpace(stripQuillEnvelope(c.Data))
 			if text == "" {
 				continue
 			}

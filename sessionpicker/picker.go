@@ -12,30 +12,44 @@ import (
 	"time"
 )
 
-// stripSenderContext removes the `<sender_context>...</sender_context>`
-// envelope that quill injects ahead of every user prompt (see the
-// `quill.sender.v1` schema documented in CLAUDE.md). Without this,
-// agents that naïvely truncate the first prompt to build a session
-// title end up saving "<sender_context>" as the title of every quill
-// session, which is useless to show in a picker.
-//
-// The function is conservative: if the envelope is not at the very
-// start of the string, the input is returned unchanged. This keeps
-// genuine user messages that happen to mention `<sender_context>` in
-// the middle of their text untouched.
-func stripSenderContext(s string) string {
-	const open = "<sender_context>"
-	const close = "</sender_context>"
+// quillEnvelopeTags are the XML-ish wrappers quill prepends to user
+// prompts before sending them to the agent (e.g. sender metadata,
+// voice-transcription decorations). When these end up as the first
+// characters of a prompt, agents that derive a title by truncating
+// the prompt save a useless "<sender_context>" or similar as the
+// session title.
+var quillEnvelopeTags = []string{"sender_context", "voice_transcription"}
+
+// stripQuillEnvelope peels off any quill envelope at the very start
+// of s, then repeats in case envelopes stack (e.g. voice transcription
+// wrapped around a sender context). Envelopes that appear mid-string
+// — or unrelated XML-ish content — are left untouched, so a user
+// message that merely mentions `<sender_context>` in prose survives.
+func stripQuillEnvelope(s string) string {
+	for {
+		next := stripOneEnvelope(s)
+		if next == s {
+			return s
+		}
+		s = next
+	}
+}
+
+func stripOneEnvelope(s string) string {
 	t := strings.TrimLeft(s, " \t\r\n")
-	if !strings.HasPrefix(t, open) {
-		return s
+	for _, tag := range quillEnvelopeTags {
+		open := "<" + tag + ">"
+		close := "</" + tag + ">"
+		if !strings.HasPrefix(t, open) {
+			continue
+		}
+		end := strings.Index(t, close)
+		if end < 0 {
+			continue
+		}
+		return strings.TrimLeft(t[end+len(close):], " \t\r\n")
 	}
-	end := strings.Index(t, close)
-	if end < 0 {
-		return s
-	}
-	rest := t[end+len(close):]
-	return strings.TrimLeft(rest, " \t\r\n")
+	return s
 }
 
 // Session is the minimal metadata needed to render a picker row and

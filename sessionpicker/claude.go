@@ -230,7 +230,7 @@ func extractClaudeTitle(ev claudeEvent) string {
 	// Peel off quill's `<sender_context>...</sender_context>` preamble
 	// so titles reflect what the user typed, not the metadata envelope
 	// quill prepends to every prompt.
-	text = stripSenderContext(text)
+	text = stripQuillEnvelope(text)
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""

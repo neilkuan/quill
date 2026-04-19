@@ -299,14 +299,12 @@ func pickerListResponse(picker sessionpicker.Picker, threadKey, cwd string, limi
 	return sb.String()
 }
 
-// formatPickerRow renders one listing line. Session IDs are shown
-// truncated to the first chunk so the line stays readable; the full
-// ID remains available via `/pick load <full-id>`.
+// formatPickerRow renders one listing line. The full session ID is
+// shown (inside backticks so it sits on a separate visual line and
+// can be long-pressed / double-clicked to copy) — truncation here
+// would force users to re-list just to recover the tail for
+// `/pick load <id>`.
 func formatPickerRow(n int, s sessionpicker.Session) string {
-	id := s.ID
-	if len(id) > 13 {
-		id = id[:13] + "…"
-	}
 	title := s.Title
 	if title == "" {
 		title = "(untitled)"
@@ -316,7 +314,7 @@ func formatPickerRow(n int, s sessionpicker.Session) string {
 	if cwd == "" {
 		cwd = "(no cwd)"
 	}
-	return fmt.Sprintf("`%d.` `%s` %s ago\n   %s\n   `%s`", n, id, when, title, cwd)
+	return fmt.Sprintf("`%d.` %s ago — %s\n   `%s`\n   cwd: `%s`", n, when, title, s.ID, cwd)
 }
 
 func pickerLoadByIndex(pool *acp.SessionPool, threadKey string, n int) string {

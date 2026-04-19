@@ -140,21 +140,29 @@ func TestKiroPickerList_LocalSmoke(t *testing.T) {
 	}
 }
 
-func TestStripSenderContext(t *testing.T) {
+func TestStripQuillEnvelope(t *testing.T) {
 	cases := []struct {
+		name     string
 		in, want string
 	}{
-		{"<sender_context>\n{\"schema\":\"quill.sender.v1\"}\n</sender_context>\n\nhello", "hello"},
-		{"<sender_context></sender_context>hi", "hi"},
-		{"  \n<sender_context>meta</sender_context>\n\nactual prompt", "actual prompt"},
-		{"no envelope here", "no envelope here"},
-		{"<other_tag>content</other_tag>", "<other_tag>content</other_tag>"},
-		{"", ""},
+		{"sender_context", "<sender_context>\n{\"schema\":\"quill.sender.v1\"}\n</sender_context>\n\nhello", "hello"},
+		{"sender_context empty body", "<sender_context></sender_context>hi", "hi"},
+		{"sender_context with leading whitespace", "  \n<sender_context>meta</sender_context>\n\nactual prompt", "actual prompt"},
+		{"voice_transcription", "<voice_transcription>你聽到我說話嗎?</voice_transcription>", ""},
+		{"voice_transcription followed by text", "<voice_transcription>hi</voice_transcription>\n\nreal prompt", "real prompt"},
+		{"stacked: voice inside sender", "<sender_context>meta</sender_context>\n<voice_transcription>hello?</voice_transcription>\nreal", "real"},
+		{"stacked: sender inside voice", "<voice_transcription>recording</voice_transcription><sender_context>meta</sender_context>prompt", "prompt"},
+		{"no envelope", "no envelope here", "no envelope here"},
+		{"unrelated XML-ish", "<other_tag>content</other_tag>", "<other_tag>content</other_tag>"},
+		{"envelope mid-string stays untouched", "free text then <sender_context>x</sender_context> tail", "free text then <sender_context>x</sender_context> tail"},
+		{"empty", "", ""},
 	}
 	for _, tc := range cases {
-		if got := stripSenderContext(tc.in); got != tc.want {
-			t.Errorf("stripSenderContext(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripQuillEnvelope(tc.in); got != tc.want {
+				t.Errorf("stripQuillEnvelope(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

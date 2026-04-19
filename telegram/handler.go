@@ -741,6 +741,10 @@ func buildSessionKeyFromChat(chatID int64, threadID int) string {
 
 // extractCommand returns the bot command name (without /) if the message starts
 // with a /command entity, or empty string otherwise.
+// extractCommand returns the command and any trailing args exactly as
+// ParseCommand expects (e.g. "pick 3"). It strips the leading slash
+// and any `@botname` suffix from the command, then appends whatever
+// text follows the entity so numeric or string arguments are preserved.
 func extractCommand(msg *models.Message) string {
 	for _, e := range msg.Entities {
 		if e.Type == models.MessageEntityTypeBotCommand && e.Offset == 0 {
@@ -751,6 +755,10 @@ func extractCommand(msg *models.Message) string {
 			// Remove @botname suffix (e.g., "reset@mybot" → "reset")
 			if idx := strings.Index(cmd, "@"); idx != -1 {
 				cmd = cmd[:idx]
+			}
+			rest := strings.TrimLeft(msg.Text[e.Offset+e.Length:], " \t")
+			if rest != "" {
+				return cmd + " " + rest
 			}
 			return cmd
 		}

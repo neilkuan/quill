@@ -200,6 +200,36 @@ func TestExtractCommand(t *testing.T) {
 			},
 			want: "",
 		},
+		{
+			name: "command with numeric arg",
+			msg: &models.Message{
+				Text: "/pick 3",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 5},
+				},
+			},
+			want: "pick 3",
+		},
+		{
+			name: "command with multi-word args",
+			msg: &models.Message{
+				Text: "/pick load abc-123",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 5},
+				},
+			},
+			want: "pick load abc-123",
+		},
+		{
+			name: "command with bot name and args",
+			msg: &models.Message{
+				Text: "/pick@mybot all",
+				Entities: []models.MessageEntity{
+					{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: 11},
+				},
+			},
+			want: "pick all",
+		},
 	}
 
 	for _, tt := range tests {

@@ -224,7 +224,7 @@ func fillFromCopilotEvents(sessionDir string, s *Session) {
 		if s.Title == "" {
 			if isCopilotUserEvent(ev) {
 				if v := extractCopilotText(ev); v != "" {
-					s.Title = truncateRunes(strings.TrimSpace(stripSenderContext(v)), 50)
+					s.Title = truncateRunes(strings.TrimSpace(stripQuillEnvelope(v)), 50)
 				}
 			}
 		}

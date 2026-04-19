@@ -103,7 +103,7 @@ func (c *CodexPicker) List(cwd string, limit int) ([]Session, error) {
 		}
 		// Peel off quill's sender_context envelope so the title is the
 		// user's actual prompt rather than the JSON metadata header.
-		cleanText := stripSenderContext(e.Text)
+		cleanText := stripQuillEnvelope(e.Text)
 		a, ok := bySession[e.SessionID]
 		if !ok {
 			a = &agg{firstTS: e.TS, lastTS: e.TS, title: cleanText}
