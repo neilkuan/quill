@@ -40,22 +40,24 @@ type Handler struct {
 
 	// streamingMu guards streamingMsgs.
 	streamingMu sync.Mutex
-	// streamingMsgs maps a bot streaming message ID to the thread key whose
-	// current prompt should be cancelled when the user taps the 🛑 reaction
-	// on that message. Entries are added just before SessionPrompt and
-	// cleared when the prompt completes.
-	streamingMsgs map[string]string
+	// streamingMsgs maps a bot streaming message ID to the specific
+	// connection whose current prompt should be cancelled when the user
+	// taps 🛑. Using the connection pointer (not threadKey) means a stale
+	// entry cannot accidentally cancel a later prompt on the same thread
+	// — if the connection has since been evicted or replaced, the cancel
+	// targets the original (now dead) connection and is a no-op.
+	streamingMsgs map[string]*acp.AcpConnection
 }
 
 // registerStreamingMsg records a bot streaming message ID so reaction-triggered
-// cancels can find the owning thread.
-func (h *Handler) registerStreamingMsg(msgID, threadKey string) {
+// cancels can find the owning connection.
+func (h *Handler) registerStreamingMsg(msgID string, conn *acp.AcpConnection) {
 	h.streamingMu.Lock()
 	defer h.streamingMu.Unlock()
 	if h.streamingMsgs == nil {
-		h.streamingMsgs = make(map[string]string)
+		h.streamingMsgs = make(map[string]*acp.AcpConnection)
 	}
-	h.streamingMsgs[msgID] = threadKey
+	h.streamingMsgs[msgID] = conn
 }
 
 func (h *Handler) unregisterStreamingMsg(msgID string) {
@@ -64,11 +66,11 @@ func (h *Handler) unregisterStreamingMsg(msgID string) {
 	delete(h.streamingMsgs, msgID)
 }
 
-func (h *Handler) lookupStreamingMsg(msgID string) (string, bool) {
+func (h *Handler) lookupStreamingMsg(msgID string) (*acp.AcpConnection, bool) {
 	h.streamingMu.Lock()
 	defer h.streamingMu.Unlock()
-	threadKey, ok := h.streamingMsgs[msgID]
-	return threadKey, ok
+	conn, ok := h.streamingMsgs[msgID]
+	return conn, ok
 }
 
 func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -351,16 +353,21 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	)
 	reactions.SetQueued()
 
-	// Track the streaming message so 🛑 reactions can be mapped to the right
-	// thread. Also drop an initial 🛑 reaction on the bot's message so users
-	// can tap-to-cancel without typing.
-	h.registerStreamingMsg(thinkingMsg.ID, threadKey)
-	go func() {
-		if err := s.MessageReactionAdd(threadID, thinkingMsg.ID, "🛑"); err != nil {
-			slog.Debug("failed to add cancel reaction", "error", err)
+	// Track the streaming message by connection pointer so 🛑 reactions
+	// route to the exact prompt that was running at registration time.
+	// Only drop the 🛑 reaction when reactions are enabled — otherwise the
+	// bot would leave emoji noise even when the user asked for a clean UI.
+	if conn := h.Pool.Connection(threadKey); conn != nil {
+		h.registerStreamingMsg(thinkingMsg.ID, conn)
+		defer h.unregisterStreamingMsg(thinkingMsg.ID)
+		if h.ReactionsConfig.Enabled {
+			go func() {
+				if err := s.MessageReactionAdd(threadID, thinkingMsg.ID, "🛑"); err != nil {
+					slog.Debug("failed to add cancel reaction", "error", err)
+				}
+			}()
 		}
-	}()
-	defer h.unregisterStreamingMsg(thinkingMsg.ID)
+	}
 
 	finalText, cancelled, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
 
@@ -435,8 +442,8 @@ func (h *Handler) OnResumed(s *discordgo.Session, r *discordgo.Resumed) {
 
 // OnMessageReactionAdd fires when any user adds a reaction. When the
 // reaction is 🛑 on one of our currently-streaming bot messages, route
-// it to CancelSession for the owning thread. The bot's own initial 🛑
-// reaction is ignored via the author check.
+// it to SessionCancel on the exact connection that owned the prompt.
+// The bot's own initial 🛑 reaction is ignored via the author check.
 func (h *Handler) OnMessageReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
 	if s.State.User != nil && r.UserID == s.State.User.ID {
 		return
@@ -444,13 +451,15 @@ func (h *Handler) OnMessageReactionAdd(s *discordgo.Session, r *discordgo.Messag
 	if r.Emoji.Name != "🛑" {
 		return
 	}
-	threadKey, ok := h.lookupStreamingMsg(r.MessageID)
-	if !ok {
+	conn, ok := h.lookupStreamingMsg(r.MessageID)
+	if !ok || conn == nil {
 		return
 	}
-	slog.Info("discord cancel via reaction", "user_id", r.UserID, "message_id", r.MessageID, "thread_key", threadKey)
-	if err := h.Pool.CancelSession(threadKey); err != nil {
-		slog.Debug("cancel via reaction failed", "thread_key", threadKey, "error", err)
+	slog.Info("discord cancel via reaction",
+		"user_id", r.UserID, "message_id", r.MessageID,
+		"session_id", conn.SessionID, "thread_key", conn.ThreadKey)
+	if err := conn.SessionCancel(); err != nil {
+		slog.Debug("cancel via reaction failed", "thread_key", conn.ThreadKey, "error", err)
 	}
 }
 

@@ -109,6 +109,7 @@ func TestAcpConnection_SessionCancel_SendsNotification(t *testing.T) {
 		SessionID: "sess_abc",
 		ThreadKey: "discord:123",
 	}
+	conn.alive.Store(true)
 
 	if err := conn.SessionCancel(); err != nil {
 		t.Fatalf("SessionCancel returned error: %v", err)
@@ -154,6 +155,7 @@ func TestAcpConnection_SessionCancel_DoesNotBlock(t *testing.T) {
 		stdin:     w,
 		SessionID: "sess_xyz",
 	}
+	conn.alive.Store(true)
 
 	// Simulate an in-flight prompt holding promptMu.
 	conn.promptMu.Lock()
@@ -181,6 +183,134 @@ func readJsonLine(r io.Reader) (string, error) {
 		return "", s.Err()
 	}
 	return s.Text(), nil
+}
+
+func TestAcpConnection_SessionCancel_NotAlive(t *testing.T) {
+	conn := &AcpConnection{
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		SessionID: "sess_dead",
+	}
+	// alive defaults to false
+	err := conn.SessionCancel()
+	if err == nil {
+		t.Fatal("expected error when connection is not alive")
+	}
+	if !strings.Contains(err.Error(), "not alive") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestAcpConnection_SessionCancel_WatchdogFires verifies that if the agent
+// ignores session/cancel, the watchdog synthesizes a stopReason=cancelled
+// response so the streaming loop does not hang forever.
+func TestAcpConnection_SessionCancel_WatchdogFires(t *testing.T) {
+	// Shrink the watchdog timeout for the test.
+	origTimeout := cancelWatchdogTimeout
+	cancelWatchdogTimeout = 50 * time.Millisecond
+	defer func() { cancelWatchdogTimeout = origTimeout }()
+
+	w := &fakeWriteCloser{}
+	notifyCh := make(chan *JsonRpcMessage, 16)
+	conn := &AcpConnection{
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		stdin:     w,
+		SessionID: "sess_stuck",
+		notifyCh:  notifyCh,
+	}
+	conn.alive.Store(true)
+
+	// Register a pending prompt ID (simulates an in-flight session/prompt).
+	respCh := make(chan *JsonRpcMessage, 1)
+	const pendingID uint64 = 7
+	conn.pendingMu.Lock()
+	conn.pending[pendingID] = respCh
+	conn.pendingMu.Unlock()
+
+	if err := conn.SessionCancel(); err != nil {
+		t.Fatalf("SessionCancel returned error: %v", err)
+	}
+
+	// Both the pending channel and the notification channel should
+	// receive the synthetic cancelled response within the timeout.
+	select {
+	case msg := <-respCh:
+		if StopReason(msg) != "cancelled" {
+			t.Errorf("expected stopReason=cancelled on pending channel, got %q", StopReason(msg))
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("watchdog did not resolve pending channel in time")
+	}
+
+	select {
+	case msg := <-notifyCh:
+		if StopReason(msg) != "cancelled" {
+			t.Errorf("expected stopReason=cancelled on notify channel, got %q", StopReason(msg))
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("watchdog did not forward to notify channel")
+	}
+
+	// Pending map should be cleared.
+	conn.pendingMu.Lock()
+	_, stillPending := conn.pending[pendingID]
+	conn.pendingMu.Unlock()
+	if stillPending {
+		t.Error("watchdog did not remove pending entry")
+	}
+}
+
+// TestAcpConnection_SessionCancel_WatchdogSkipsResolvedIDs verifies the
+// watchdog is a no-op when the agent already responded normally before
+// the timeout fires — no double-resolve, no spurious cancelled messages.
+func TestAcpConnection_SessionCancel_WatchdogSkipsResolvedIDs(t *testing.T) {
+	origTimeout := cancelWatchdogTimeout
+	cancelWatchdogTimeout = 50 * time.Millisecond
+	defer func() { cancelWatchdogTimeout = origTimeout }()
+
+	w := &fakeWriteCloser{}
+	conn := &AcpConnection{
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		stdin:     w,
+		SessionID: "sess_honored",
+	}
+	conn.alive.Store(true)
+
+	respCh := make(chan *JsonRpcMessage, 1)
+	const pendingID uint64 = 3
+	conn.pendingMu.Lock()
+	conn.pending[pendingID] = respCh
+	conn.pendingMu.Unlock()
+
+	if err := conn.SessionCancel(); err != nil {
+		t.Fatalf("SessionCancel returned error: %v", err)
+	}
+
+	// Simulate the agent honoring cancel — readLoop would normally do
+	// this: remove from pending and deliver the real response.
+	realResult := json.RawMessage(`{"stopReason":"cancelled","source":"agent"}`)
+	conn.pendingMu.Lock()
+	delete(conn.pending, pendingID)
+	conn.pendingMu.Unlock()
+	id := pendingID
+	respCh <- &JsonRpcMessage{ID: &id, Result: &realResult}
+
+	// Drain respCh to get the real response.
+	got := <-respCh
+	var body map[string]string
+	_ = json.Unmarshal(*got.Result, &body)
+	if body["source"] != "agent" {
+		t.Errorf("expected agent-sourced response, got %v", body)
+	}
+
+	// Wait for watchdog to fire — it should find nothing to resolve.
+	time.Sleep(100 * time.Millisecond)
+
+	// No second message should appear on respCh.
+	select {
+	case extra := <-respCh:
+		t.Fatalf("watchdog fired for already-resolved id, got %+v", extra)
+	default:
+	}
 }
 
 func TestStopReason(t *testing.T) {

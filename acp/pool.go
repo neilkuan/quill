@@ -138,6 +138,18 @@ func (p *SessionPool) GetOrCreate(threadID string) error {
 	return nil
 }
 
+// Connection returns the active connection for a thread, or nil if none
+// exists. The returned pointer is safe to retain — connections are not
+// mutated after creation, and callers must gate use on conn.Alive().
+// Useful when a handler needs to capture the specific connection that
+// owns a prompt (e.g. for cancel routing) without holding the pool lock
+// across a long-running operation.
+func (p *SessionPool) Connection(threadKey string) *AcpConnection {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.connections[threadKey]
+}
+
 // WithConnection provides access to a connection. Caller must have called GetOrCreate first.
 func (p *SessionPool) WithConnection(threadID string, fn func(conn *AcpConnection) error) error {
 	p.mu.Lock()

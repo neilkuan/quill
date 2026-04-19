@@ -26,6 +26,7 @@ func TestSessionPool_CancelSession_SendsNotification(t *testing.T) {
 		SessionID: "sess_pool",
 		ThreadKey: "discord:42",
 	}
+	conn.alive.Store(true)
 	p := &SessionPool{connections: map[string]*AcpConnection{
 		"discord:42": conn,
 	}}
