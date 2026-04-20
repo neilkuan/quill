@@ -500,6 +500,12 @@ const modelCallbackPrefix = "model|"
 // typical threadKeys. Format: "pick|<sessionKey>|<N>".
 const pickCallbackPrefix = "pick|"
 
+// telegramCallbackDataMax is Telegram's hard limit for
+// callback_data payloads (bytes). The BotAPI rejects buttons above
+// this and we lose the whole SendMessage if we try anyway, so
+// pickers defensively skip entries that would overflow instead.
+const telegramCallbackDataMax = 64
+
 // sendModePicker posts a message with an inline keyboard, one button
 // per available mode, so users can tap to switch instead of typing
 // `/mode <id>`. The current mode is marked with ➤ in the button label.
@@ -516,6 +522,7 @@ func (h *Handler) sendModePicker(ctx context.Context, b *bot.Bot, chatID int64, 
 	}
 
 	rows := make([][]models.InlineKeyboardButton, 0, len(listing.Available))
+	var skipped int
 	for _, m := range listing.Available {
 		label := m.Name
 		if label == "" {
@@ -524,10 +531,31 @@ func (h *Handler) sendModePicker(ctx context.Context, b *bot.Bot, chatID int64, 
 		if m.ID == listing.Current {
 			label = "➤ " + label
 		}
+		cb := modeCallbackPrefix + sessionKey + "|" + m.ID
+		if len(cb) > telegramCallbackDataMax {
+			// Skip rather than lose the whole SendMessage to a too-long
+			// callback_data. This is rare — only hit when thread key +
+			// mode id exceed ~60 bytes combined — but we log so users
+			// at least have a breadcrumb if a mode vanishes from the UI.
+			slog.Warn("skipping telegram mode button: callback_data over cap",
+				"mode_id", m.ID, "len", len(cb), "cap", telegramCallbackDataMax)
+			skipped++
+			continue
+		}
 		rows = append(rows, []models.InlineKeyboardButton{{
 			Text:         label,
-			CallbackData: modeCallbackPrefix + sessionKey + "|" + m.ID,
+			CallbackData: cb,
 		}})
+	}
+	if len(rows) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            fmt.Sprintf("No mode fits in an interactive button (skipped %d). Use <code>/mode &lt;id&gt;</code> directly instead.", skipped),
+			ParseMode:       models.ParseModeHTML,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
@@ -554,6 +582,7 @@ func (h *Handler) sendModelPicker(ctx context.Context, b *bot.Bot, chatID int64,
 	}
 
 	rows := make([][]models.InlineKeyboardButton, 0, len(listing.Available))
+	var skipped int
 	for _, m := range listing.Available {
 		label := m.Name
 		if label == "" {
@@ -562,10 +591,27 @@ func (h *Handler) sendModelPicker(ctx context.Context, b *bot.Bot, chatID int64,
 		if m.ID == listing.Current {
 			label = "➤ " + label
 		}
+		cb := modelCallbackPrefix + sessionKey + "|" + m.ID
+		if len(cb) > telegramCallbackDataMax {
+			slog.Warn("skipping telegram model button: callback_data over cap",
+				"model_id", m.ID, "len", len(cb), "cap", telegramCallbackDataMax)
+			skipped++
+			continue
+		}
 		rows = append(rows, []models.InlineKeyboardButton{{
 			Text:         label,
-			CallbackData: modelCallbackPrefix + sessionKey + "|" + m.ID,
+			CallbackData: cb,
 		}})
+	}
+	if len(rows) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            fmt.Sprintf("No model fits in an interactive button (skipped %d). Use <code>/model &lt;id&gt;</code> directly instead.", skipped),
+			ParseMode:       models.ParseModeHTML,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
