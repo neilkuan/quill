@@ -367,83 +367,138 @@ func (h *Handler) streamPrompt(
 			}
 		}()
 
-		// Process ACP notifications
+		// Process ACP notifications — wrapped in a retry loop so we can
+		// recover from Copilot's reasoning_effort mismatch by switching
+		// model and re-sending the same prompt once.
 		var promptErr error
-		for notification := range rx {
-			if notification.ID != nil {
-				if notification.Error != nil {
-					promptErr = notification.Error
-				} else {
-					reason := acp.StopReason(notification)
-					if reason == "cancelled" {
-						cancelled = true
+		promptHeld := true
+		retryAttempted := false
+	retryLoop:
+		for {
+			for notification := range rx {
+				if notification.ID != nil {
+					if notification.Error != nil {
+						promptErr = notification.Error
+					} else {
+						reason := acp.StopReason(notification)
+						if reason == "cancelled" {
+							cancelled = true
+						}
+						if reason != "" {
+							slog.Info("acp: prompt completed",
+								"thread_key", conn.ThreadKey,
+								"session_id", conn.SessionID,
+								"stop_reason", reason)
+						}
 					}
-					if reason != "" {
-						slog.Info("acp: prompt completed",
-							"thread_key", conn.ThreadKey,
-							"session_id", conn.SessionID,
-							"stop_reason", reason)
-					}
+					break
 				}
-				break
-			}
 
-			event := acp.ClassifyNotification(notification)
-			if event == nil {
-				continue
-			}
+				event := acp.ClassifyNotification(notification)
+				if event == nil {
+					continue
+				}
 
-			switch event.Type {
-			case acp.AcpEventText:
-				textBuf.WriteString(event.Text)
-				display := composeDisplay(toolLines, textBuf.String())
-				displayMu.Lock()
-				currentDisplay = display
-				displayMu.Unlock()
+				switch event.Type {
+				case acp.AcpEventText:
+					textBuf.WriteString(event.Text)
+					display := composeDisplay(toolLines, textBuf.String())
+					displayMu.Lock()
+					currentDisplay = display
+					displayMu.Unlock()
 
-			case acp.AcpEventThinking:
-				// Reaction handling would go here for Teams if we had reaction support
+				case acp.AcpEventThinking:
+					// Reaction handling would go here for Teams if we had reaction support
 
-			case acp.AcpEventToolStart:
-				if event.Title != "" {
+				case acp.AcpEventToolStart:
+					if event.Title != "" {
+						if label, ok := platform.FormatToolTitle(event.Title, h.ToolDisplay); ok {
+							toolLines = append(toolLines, fmt.Sprintf("🔧 `%s`...", label))
+							display := composeDisplay(toolLines, textBuf.String())
+							displayMu.Lock()
+							currentDisplay = display
+							displayMu.Unlock()
+						}
+					}
+
+				case acp.AcpEventToolDone:
+					if event.Title == "" {
+						// tool_call_update may omit `title` when the agent only
+						// reports a status change. Ignore — we don't know which
+						// line to update, and matching with an empty string would
+						// hit every line via strings.Contains(s, "") == true.
+						continue
+					}
+					icon := "✅"
+					if event.Status != "completed" {
+						icon = "❌"
+					}
 					if label, ok := platform.FormatToolTitle(event.Title, h.ToolDisplay); ok {
-						toolLines = append(toolLines, fmt.Sprintf("🔧 `%s`...", label))
+						// Update the matching tool line
+						for i := len(toolLines) - 1; i >= 0; i-- {
+							if strings.Contains(toolLines[i], label) {
+								toolLines[i] = fmt.Sprintf("%s `%s`", icon, label)
+								break
+							}
+						}
 						display := composeDisplay(toolLines, textBuf.String())
 						displayMu.Lock()
 						currentDisplay = display
 						displayMu.Unlock()
 					}
 				}
-
-			case acp.AcpEventToolDone:
-				if event.Title == "" {
-					// tool_call_update may omit `title` when the agent only
-					// reports a status change. Ignore — we don't know which
-					// line to update, and matching with an empty string would
-					// hit every line via strings.Contains(s, "") == true.
-					continue
-				}
-				icon := "✅"
-				if event.Status != "completed" {
-					icon = "❌"
-				}
-				if label, ok := platform.FormatToolTitle(event.Title, h.ToolDisplay); ok {
-					// Update the matching tool line
-					for i := len(toolLines) - 1; i >= 0; i-- {
-						if strings.Contains(toolLines[i], label) {
-							toolLines[i] = fmt.Sprintf("%s `%s`", icon, label)
-							break
-						}
-					}
-					display := composeDisplay(toolLines, textBuf.String())
-					displayMu.Lock()
-					currentDisplay = display
-					displayMu.Unlock()
-				}
 			}
+
+			if retryAttempted || promptErr != nil || cancelled {
+				break retryLoop
+			}
+			cleanSoFar := platform.StripAgentRetryNoise(textBuf.String())
+			if !platform.IsCopilotReasoningEffortError(cleanSoFar) {
+				break retryLoop
+			}
+			available, current := conn.Models()
+			ids := make([]string, len(available))
+			for i, m := range available {
+				ids[i] = m.ID
+			}
+			newModel, ok := platform.PickFallbackModel(ids, current)
+			if !ok {
+				break retryLoop
+			}
+			retryAttempted = true
+			conn.PromptDone()
+			promptHeld = false
+			if setErr := conn.SessionSetModel(newModel); setErr != nil {
+				slog.Warn("copilot auto-retry: set_model failed",
+					"thread_key", conn.ThreadKey, "session_id", conn.SessionID,
+					"fallback_model", newModel, "error", setErr)
+				break retryLoop
+			}
+			textBuf.Reset()
+			toolLines = toolLines[:0]
+			textBuf.WriteString(fmt.Sprintf(
+				"🔄 _Copilot 拒絕 `%s` + reasoning_effort；已切換到 `%s` 並重試..._\n\n",
+				current, newModel))
+			displayMu.Lock()
+			currentDisplay = textBuf.String()
+			displayMu.Unlock()
+			slog.Info("copilot auto-retry: switching model after reasoning_effort rejection",
+				"thread_key", conn.ThreadKey, "session_id", conn.SessionID,
+				"previous_model", current, "fallback_model", newModel)
+			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content)
+			if promptErr2 != nil {
+				slog.Warn("copilot auto-retry: session_prompt failed",
+					"thread_key", conn.ThreadKey, "session_id", conn.SessionID,
+					"error", promptErr2)
+				break retryLoop
+			}
+			rx = newRx
+			promptHeld = true
 		}
 
-		conn.PromptDone()
+		if promptHeld {
+			conn.PromptDone()
+		}
 		close(done)
 
 		// If the prompt returned an error, surface it

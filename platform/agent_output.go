@@ -40,3 +40,48 @@ func StripAgentRetryNoise(text string) string {
 func DetectAgentError(text string) bool {
 	return strings.Contains(text, copilotExecutionErrorPrefix)
 }
+
+// copilotReasoningEffortMismatch is the tail of Copilot CLI's CAPIError
+// when the active model can't accept the configured `reasoning_effort`
+// value. Observed in practice when the session resumes with model
+// `claude-haiku-4.5` while Copilot's global reasoning_effort stays at
+// `"medium"`.
+const copilotReasoningEffortMismatch = "does not support reasoning effort"
+
+// IsCopilotReasoningEffortError reports whether `text` matches Copilot's
+// "model … does not support reasoning effort" CAPIError. When true,
+// switching the session's model to one that accepts reasoning effort
+// (e.g. GPT-5 mini / GPT-4.1) is a reliable recovery path — the session
+// state otherwise does not expose a way to downgrade reasoning_effort.
+func IsCopilotReasoningEffortError(text string) bool {
+	return strings.Contains(text, copilotReasoningEffortMismatch)
+}
+
+// PickFallbackModel chooses a non-current model id from `available` to
+// use when the session's current model has been rejected by the agent.
+// Preference order:
+//  1. a non-current id that does not look like a Claude Haiku variant
+//     (Haiku is the usual culprit of the Copilot reasoning_effort clash),
+//  2. any non-current id,
+//  3. ("", false) when the list has no alternative.
+//
+// The comparison is case-insensitive on the id to catch "claude-haiku-4.5"
+// / "Claude-Haiku" / future suffix variations without a hard-coded list.
+func PickFallbackModel(available []string, current string) (string, bool) {
+	for _, id := range available {
+		if id == "" || id == current {
+			continue
+		}
+		if strings.Contains(strings.ToLower(id), "haiku") {
+			continue
+		}
+		return id, true
+	}
+	for _, id := range available {
+		if id == "" || id == current {
+			continue
+		}
+		return id, true
+	}
+	return "", false
+}
