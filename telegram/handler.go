@@ -895,6 +895,11 @@ func (h *Handler) streamPrompt(
 
 		// Final message — split for 4096-char Telegram limit
 		finalText = textBuf.String()
+		// Copilot CLI streams retry spam and its own execution errors as
+		// agent_message_chunk text (stopReason stays "end_turn"), so strip
+		// the noise and flag self-reported errors before composing the reply.
+		finalText = platform.StripAgentRetryNoise(finalText)
+		agentErrored := platform.DetectAgentError(finalText)
 		finalContent := composeDisplay(toolLines, finalText)
 		if finalContent == "" {
 			if cancelled {
@@ -905,11 +910,19 @@ func (h *Handler) streamPrompt(
 		} else if cancelled {
 			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
-		// Append a mode/model footer so users know which persona and
-		// backend produced the reply without having to run /info.
-		_, mode := conn.Modes()
-		_, model := conn.Models()
-		finalContent += platform.FormatSessionFooter(mode, model)
+		if agentErrored {
+			// The agent failed before producing a real answer — wrap the
+			// output as an error block and omit the mode/model footer,
+			// which would misleadingly imply a successful reply from the
+			// advertised backend.
+			finalContent = "⚠️ **Agent error**\n" + finalContent
+		} else {
+			// Append a mode/model footer so users know which persona and
+			// backend produced the reply without having to run /info.
+			_, mode := conn.Modes()
+			_, model := conn.Models()
+			finalContent += platform.FormatSessionFooter(mode, model)
+		}
 		// Rewrite GFM tables before splitting — Telegram Markdown v1 doesn't
 		// render table syntax, so we wrap them in fenced blocks (or convert
 		// to bullets) for readable rendering. Skipped during streaming preview.
