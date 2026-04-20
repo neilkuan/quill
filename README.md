@@ -232,6 +232,8 @@ Commands are registered as native platform commands — Discord Slash Commands a
 | `/mode` | List or switch the session's agent mode (ACP `session/set_mode`). With no argument, Discord replies with a select menu and Telegram with an inline keyboard so users can tap to pick. `/mode <id>` or `/mode <N>` switches directly. Only works once an active session exists in the thread (send a message first if needed). Requires the agent to advertise a `modes` object during session setup. |
 | `/model` | List or switch the session's LLM model (ACP `session/set_model`). Same UX as `/mode` — interactive on Discord / Telegram, text-only on Teams. Requires the agent to advertise a `models` object during session setup. |
 
+Every agent reply also carries a small footer showing the session's current mode and model — e.g. `— mode: `卡卡西` · model: `claude-sonnet-4.6`` — so users know which persona and backend produced the answer without running `/info`. The footer is omitted when the agent advertises neither.
+
 ###### HTTP API (Optional)
 
 Enable in config:
