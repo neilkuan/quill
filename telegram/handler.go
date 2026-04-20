@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -428,7 +429,16 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 		response = command.ExecuteStop(h.Pool, sessionKey)
 	case command.CmdPicker:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
-		response = command.ExecutePicker(h.Pool, h.Picker, sessionKey, cmd.Args, h.Pool.WorkingDir())
+		args := strings.TrimSpace(cmd.Args)
+		// Empty args or `all` → interactive keyboard; `/pick <N>`,
+		// `/pick load <id>` and typos keep the text path so the
+		// existing workflow is unchanged.
+		bypassCWD := strings.EqualFold(args, "all")
+		if args == "" || bypassCWD {
+			h.sendPickPicker(ctx, b, chatID, threadID, msg, sessionKey, bypassCWD)
+			return
+		}
+		response = command.ExecutePicker(h.Pool, h.Picker, sessionKey, args, h.Pool.WorkingDir())
 	case command.CmdMode:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
 		if strings.TrimSpace(cmd.Args) != "" {
@@ -483,6 +493,12 @@ const modeCallbackPrefix = "mode|"
 // modelCallbackPrefix is the /model analogue of modeCallbackPrefix.
 // Format: "model|<sessionKey>|<modelID>".
 const modelCallbackPrefix = "model|"
+
+// pickCallbackPrefix is the /pick analogue, but carries a 1-based
+// index into the cached listing (not the full session id) because
+// session UUIDs would blow Telegram's 64-byte callback_data cap for
+// typical threadKeys. Format: "pick|<sessionKey>|<N>".
+const pickCallbackPrefix = "pick|"
 
 // sendModePicker posts a message with an inline keyboard, one button
 // per available mode, so users can tap to switch instead of typing
@@ -562,9 +578,65 @@ func (h *Handler) sendModelPicker(ctx context.Context, b *bot.Bot, chatID int64,
 	})
 }
 
+// sendPickPicker renders /pick as an InlineKeyboard. Each button
+// carries the 1-based index of the session in the cached listing —
+// the same cache /pick <N> reads — so a tap is resolved by
+// command.LoadPickerByIndex.
+func (h *Handler) sendPickPicker(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msg *models.Message, sessionKey string, bypassCWD bool) {
+	cwd := h.Pool.WorkingDir()
+	listing := command.ListPickerSessions(h.Picker, sessionKey, cwd, bypassCWD)
+	if listing.Err != nil || len(listing.Sessions) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            listing.Message,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
+	}
+
+	rows := make([][]models.InlineKeyboardButton, 0, len(listing.Sessions))
+	for i, sess := range listing.Sessions {
+		title := sess.Title
+		if title == "" {
+			title = "(untitled)"
+		}
+		// Telegram InlineKeyboardButton.Text has a practical 64-char
+		// visual cap; truncating keeps long titles readable.
+		label := fmt.Sprintf("%d. %s", i+1, truncateForButton(title, 48))
+		rows = append(rows, []models.InlineKeyboardButton{{
+			Text:         label,
+			CallbackData: pickCallbackPrefix + sessionKey + "|" + strconv.Itoa(i+1),
+		}})
+	}
+
+	header := fmt.Sprintf("Select a session (%s)", listing.AgentType)
+	if bypassCWD {
+		header += " — all cwds"
+	} else if listing.CWD != "" {
+		header += fmt.Sprintf(" — cwd: <code>%s</code>", listing.CWD)
+	}
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Text:            header,
+		ParseMode:       models.ParseModeHTML,
+		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		ReplyMarkup:     &models.InlineKeyboardMarkup{InlineKeyboard: rows},
+	})
+}
+
+func truncateForButton(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
 // handleCallbackQuery routes button taps from inline keyboards. The
-// known sources are /mode (prefix "mode|") and /model (prefix
-// "model|"); unknown callback_data is acknowledged silently so the
+// known sources are /mode ("mode|"), /model ("model|") and /pick
+// ("pick|"); unknown callback_data is acknowledged silently so the
 // spinner on the client clears without producing user-visible noise.
 func (h *Handler) handleCallbackQuery(ctx context.Context, b *bot.Bot, cq *models.CallbackQuery) {
 	data := cq.Data
@@ -592,6 +664,17 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, b *bot.Bot, cq *model
 			return
 		}
 		resultMsg = command.ExecuteMode(h.Pool, parts[0], parts[1])
+	case strings.HasPrefix(data, pickCallbackPrefix):
+		rest := strings.TrimPrefix(data, pickCallbackPrefix)
+		parts := strings.SplitN(rest, "|", 2)
+		if len(parts) != 2 {
+			return
+		}
+		n, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return
+		}
+		resultMsg = command.LoadPickerByIndex(h.Pool, parts[0], n)
 	default:
 		return
 	}

@@ -536,6 +536,11 @@ const modeSelectCustomIDPrefix = "mode-select:"
 // modeSelectCustomIDPrefix.
 const modelSelectCustomIDPrefix = "model-select:"
 
+// pickSelectCustomIDPrefix marks a SelectMenu produced by /pick. The
+// suffix is the threadKey; the option Value carries the full session
+// id (Discord Value cap is 100 chars, comfortably above a UUID).
+const pickSelectCustomIDPrefix = "pick-select:"
+
 func (h *Handler) registerSlashCommands(s *discordgo.Session, appID string) {
 	for _, cmd := range slashCommands {
 		if _, err := s.ApplicationCommandCreate(appID, "", cmd); err != nil {
@@ -564,15 +569,19 @@ func (h *Handler) handleSlashCommand(s *discordgo.Session, i *discordgo.Interact
 		userID = i.User.ID
 	}
 
-	// Mode and Model are special: with no argument we respond with an
-	// interactive SelectMenu instead of plain text, so each gets its
-	// own branch.
+	// Mode, Model and Pick are special: with no argument we respond
+	// with an interactive SelectMenu instead of plain text, so each
+	// gets its own branch.
 	if data.Name == command.CmdMode {
 		h.handleModeSlash(s, i, data)
 		return
 	}
 	if data.Name == command.CmdModel {
 		h.handleModelSlash(s, i, data)
+		return
+	}
+	if data.Name == command.CmdPicker {
+		h.handlePickSlash(s, i, data)
 		return
 	}
 
@@ -592,16 +601,6 @@ func (h *Handler) handleSlashCommand(s *discordgo.Session, i *discordgo.Interact
 	case command.CmdStop:
 		threadKey := buildSessionKey(i.ChannelID)
 		response = command.ExecuteStop(h.Pool, threadKey)
-	case command.CmdPicker:
-		threadKey := buildSessionKey(i.ChannelID)
-		args := ""
-		for _, opt := range data.Options {
-			if opt.Name == "args" {
-				args = opt.StringValue()
-				break
-			}
-		}
-		response = command.ExecutePicker(h.Pool, h.Picker, threadKey, args, h.Pool.WorkingDir())
 	default:
 		return
 	}
@@ -784,7 +783,153 @@ func (h *Handler) handleComponentInteraction(s *discordgo.Session, i *discordgo.
 				Flags:      discordgo.MessageFlagsEphemeral,
 			},
 		})
+	case strings.HasPrefix(data.CustomID, pickSelectCustomIDPrefix):
+		threadKey := strings.TrimPrefix(data.CustomID, pickSelectCustomIDPrefix)
+		if len(data.Values) == 0 {
+			return
+		}
+		msg := command.LoadPickerByID(h.Pool, h.Picker, threadKey, data.Values[0])
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Content:    msg,
+				Components: []discordgo.MessageComponent{},
+				Flags:      discordgo.MessageFlagsEphemeral,
+			},
+		})
 	}
+}
+
+// handlePickSlash responds to /pick. With no args (or `all`) we render
+// a SelectMenu populated with the listing; `/pick <N>` and
+// `/pick load <id>` fall through to the plain-text path so experienced
+// users retain the typing workflow.
+func (h *Handler) handlePickSlash(s *discordgo.Session, i *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
+	threadKey := buildSessionKey(i.ChannelID)
+
+	args := ""
+	for _, opt := range data.Options {
+		if opt.Name == "args" {
+			args = strings.TrimSpace(opt.StringValue())
+			break
+		}
+	}
+
+	// Only two shapes render the interactive picker: empty args and
+	// the `all` bypass. Everything else is load-by-index / load-by-id /
+	// typos, which go through the text path.
+	bypassCWD := strings.EqualFold(args, "all")
+	if args != "" && !bypassCWD {
+		msg := command.ExecutePicker(h.Pool, h.Picker, threadKey, args, h.Pool.WorkingDir())
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: msg},
+		})
+		return
+	}
+
+	listing := command.ListPickerSessions(h.Picker, threadKey, h.Pool.WorkingDir(), bypassCWD)
+	if listing.Err != nil || len(listing.Sessions) == 0 {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: listing.Message},
+		})
+		return
+	}
+
+	options := make([]discordgo.SelectMenuOption, 0, len(listing.Sessions))
+	for _, sess := range listing.Sessions {
+		title := sess.Title
+		if title == "" {
+			title = "(untitled)"
+		}
+		options = append(options, discordgo.SelectMenuOption{
+			Label:       truncateForSelectLabel(title),
+			Value:       sess.ID,
+			Description: truncateForSelectDesc(formatPickOptionDescription(sess)),
+		})
+	}
+
+	header := fmt.Sprintf("**Select a session to resume** (%s)", listing.AgentType)
+	if bypassCWD {
+		header += " _(all cwds)_"
+	} else if listing.CWD != "" {
+		header += fmt.Sprintf(" _(cwd: `%s`)_", listing.CWD)
+	}
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: header,
+			Flags:   discordgo.MessageFlagsEphemeral,
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.SelectMenu{
+							CustomID:    pickSelectCustomIDPrefix + threadKey,
+							Placeholder: "Pick a session",
+							MinValues:   intPtr(1),
+							MaxValues:   1,
+							Options:     options,
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
+// formatPickOptionDescription composes the small-print description
+// shown under each SelectMenu option: age + cwd, kept short.
+func formatPickOptionDescription(s sessionpicker.Session) string {
+	age := formatPickDuration(s.UpdatedAt)
+	cwd := s.CWD
+	if cwd == "" {
+		cwd = "(no cwd)"
+	}
+	return fmt.Sprintf("%s ago · %s", age, cwd)
+}
+
+// formatPickDuration is a lightweight duration formatter, kept local
+// so the discord package doesn't leak the command-layer one.
+func formatPickDuration(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// truncateForSelectLabel and truncateForSelectDesc enforce Discord's
+// 100-character cap on SelectMenuOption Label / Description.
+func truncateForSelectLabel(s string) string { return truncateUTF8WithEllipsis(s, 100) }
+func truncateForSelectDesc(s string) string  { return truncateUTF8WithEllipsis(s, 100) }
+
+func truncateUTF8WithEllipsis(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	// Reserve 3 bytes for "…" (rendered as … one rune ≈ 3 bytes UTF-8).
+	cut := max - 3
+	if cut < 0 {
+		cut = 0
+	}
+	// Trim to a rune boundary to avoid half-characters.
+	r := []rune(s)
+	out := ""
+	for _, c := range r {
+		n := len(string(c))
+		if len(out)+n > cut {
+			break
+		}
+		out += string(c)
+	}
+	return out + "…"
 }
 
 func streamPrompt(

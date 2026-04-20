@@ -185,6 +185,88 @@ func TestExecutePicker_EmptyListSuggestsAll(t *testing.T) {
 	}
 }
 
+func TestListPickerSessions_NilPickerReturnsErrListing(t *testing.T) {
+	listing := ListPickerSessions(nil, "discord:chan-x", "/any", false)
+	if listing.Err == nil {
+		t.Fatal("expected Err to be set when picker is nil")
+	}
+	if !strings.Contains(strings.ToLower(listing.Message), "not supported") {
+		t.Errorf("expected friendly message, got: %q", listing.Message)
+	}
+	if len(listing.Sessions) != 0 {
+		t.Errorf("Sessions should be empty, got %d", len(listing.Sessions))
+	}
+}
+
+func TestListPickerSessions_PopulatesSessionsAndCache(t *testing.T) {
+	fake := &fakePicker{
+		agentType: "kiro-cli",
+		sessions: []sessionpicker.Session{
+			{ID: "a", Title: "one", CWD: "/work", UpdatedAt: time.Now().Add(-time.Hour)},
+			{ID: "b", Title: "two", CWD: "/work", UpdatedAt: time.Now().Add(-30 * time.Minute)},
+		},
+	}
+	thread := "discord:chan-pick-list"
+
+	listing := ListPickerSessions(fake, thread, "/work", false)
+	if listing.Err != nil {
+		t.Fatalf("unexpected error: %v", listing.Err)
+	}
+	if listing.AgentType != "kiro-cli" {
+		t.Errorf("AgentType = %q", listing.AgentType)
+	}
+	if listing.CWD != "/work" || listing.BypassCWD {
+		t.Errorf("cwd metadata wrong: cwd=%q bypass=%v", listing.CWD, listing.BypassCWD)
+	}
+	if len(listing.Sessions) != 2 {
+		t.Fatalf("Sessions len = %d, want 2", len(listing.Sessions))
+	}
+
+	// Cache should now resolve to the same sessions — the
+	// callback-data path (and `/pick <N>`) depends on this.
+	cached, ok := getPickerListing(thread)
+	if !ok || len(cached) != 2 {
+		t.Errorf("expected cache to hold 2 entries, got ok=%v len=%d", ok, len(cached))
+	}
+}
+
+func TestListPickerSessions_BypassCWD(t *testing.T) {
+	fake := &fakePicker{
+		agentType: "codex-acp",
+		sessions: []sessionpicker.Session{
+			{ID: "x", Title: "t", CWD: "/elsewhere", UpdatedAt: time.Now()},
+		},
+	}
+	// When bypassCWD is true, the listing uses the unfiltered path
+	// (cwd dropped) — verifies all-sessions mode reaches the picker.
+	listing := ListPickerSessions(fake, "discord:chan-bypass", "/not-a-match", true)
+	if listing.Err != nil {
+		t.Fatalf("unexpected error: %v", listing.Err)
+	}
+	if !listing.BypassCWD {
+		t.Error("BypassCWD should be true")
+	}
+	if len(listing.Sessions) != 1 {
+		t.Fatalf("expected 1 session from all-cwds listing, got %d", len(listing.Sessions))
+	}
+}
+
+func TestLoadPickerByIndex_ResolvesFromCache(t *testing.T) {
+	thread := "discord:chan-load-idx"
+	cachePickerListing(thread, []sessionpicker.Session{
+		{ID: "sess-1", CWD: "/w"}, {ID: "sess-2", CWD: "/w"},
+	})
+
+	// With no pool the load itself will fail, but we only care that
+	// the index-resolution path reaches the pool layer (i.e. doesn't
+	// short-circuit at "no cache") — so we exercise an out-of-range
+	// case for determinism.
+	msg := LoadPickerByIndex(nil, thread, 99)
+	if !strings.Contains(strings.ToLower(msg), "out of range") {
+		t.Errorf("expected out-of-range, got: %q", msg)
+	}
+}
+
 func TestPickerCache_TTLExpiry(t *testing.T) {
 	thread := "thread-ttl"
 	cachePickerListing(thread, []sessionpicker.Session{{ID: "a"}})

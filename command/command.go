@@ -229,6 +229,64 @@ func getPickerListing(threadKey string) ([]sessionpicker.Session, bool) {
 	return e.sessions, true
 }
 
+// PickerListing is the data the platform handlers need to render an
+// interactive session picker for /pick. Platforms that can't render a
+// widget can still show `Message` as a text fallback.
+type PickerListing struct {
+	Message   string                  // human-readable listing (also used as text fallback)
+	Sessions  []sessionpicker.Session // the actual candidates, zero-indexed
+	AgentType string                  // e.g. "kiro-cli", "claude-agent-acp"
+	CWD       string                  // the cwd filter used (empty when bypassed)
+	BypassCWD bool                    // true when `all` was requested
+	// Err is non-nil when the listing could not be produced (picker
+	// unsupported or list call failed). Platforms should surface
+	// Message and skip rendering the picker.
+	Err error
+}
+
+// ListPickerSessions is the data-only counterpart to ExecutePicker's
+// list path. It caches the result so a subsequent /pick <N> (or a
+// callback-data tap carrying an index) resolves to the same session
+// list. When picker is nil, a PickerListing with Err set and a
+// friendly Message is returned — platforms should render the text
+// and skip the widget.
+func ListPickerSessions(picker sessionpicker.Picker, threadKey, cwdFilter string, bypassCWD bool) PickerListing {
+	if picker == nil {
+		msg := "Session picker is not supported for the current agent backend."
+		return PickerListing{Message: msg, Err: fmt.Errorf("picker unavailable")}
+	}
+	cwd := cwdFilter
+	limit := pickerListLimit
+	if bypassCWD {
+		cwd = ""
+		limit = pickerListMaxAll
+	}
+	listing := PickerListing{AgentType: picker.AgentType(), CWD: cwd, BypassCWD: bypassCWD}
+	listing.Message = pickerListResponse(picker, threadKey, cwd, limit, bypassCWD)
+	// Re-read the cache that pickerListResponse just populated so the
+	// caller can iterate Sessions without making a second picker.List
+	// call (which would race against the cache and could return a
+	// different slice ordering).
+	if cached, ok := getPickerListing(threadKey); ok {
+		listing.Sessions = cached
+	}
+	return listing
+}
+
+// LoadPickerByIndex is the shared resume-by-cached-index path. Used
+// by both the text `/pick <N>` and platform callbacks that carry an
+// index in the callback data.
+func LoadPickerByIndex(pool *acp.SessionPool, threadKey string, n int) string {
+	return pickerLoadByIndex(pool, threadKey, n)
+}
+
+// LoadPickerByID is the shared resume-by-full-id path. Used by
+// `/pick load <id>` and by Discord SelectMenu values (which carry
+// the full id directly).
+func LoadPickerByID(pool *acp.SessionPool, picker sessionpicker.Picker, threadKey, id string) string {
+	return pickerLoadByID(pool, picker, threadKey, id)
+}
+
 // ExecutePicker handles /pick for a chat thread. args is
 // the trimmed argument string after the command name; cwdFilter is
 // usually the agent pool's working_dir so the default listing stays
