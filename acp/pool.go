@@ -3,6 +3,7 @@ package acp
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -372,6 +373,14 @@ func (p *SessionPool) LoadSessionForThread(threadKey, sessionID, cwd string) (bo
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Short-circuit: the user picked the same session their current
+	// thread is already running. Kiro (and similar) reject a concurrent
+	// session/load on the same id because the first process still owns
+	// it, so re-loading is both pointless and noisy.
+	if conn, ok := p.connections[threadKey]; ok && conn.SessionID == sessionID && conn.Alive() {
+		return true, fmt.Sprintf("Session `%s` is already the active session for this thread — nothing to resume.", sessionID)
+	}
+
 	if conn, ok := p.connections[threadKey]; ok {
 		conn.Kill()
 		delete(p.connections, threadKey)
@@ -413,7 +422,16 @@ func (p *SessionPool) LoadSessionForThread(threadKey, sessionID, cwd string) (bo
 			}
 		}
 		p.connections[threadKey] = conn
-		return false, fmt.Sprintf("Could not load session `%s`: `%v`\n\nA fresh session has been started.", sessionID, err)
+		// Kiro (and any agent that locks session files per-process) reports
+		// `Session is active in another process` when the session is already
+		// open elsewhere — another quill instance, a local Kiro TUI, etc.
+		// Spell that out so the user knows to close the other client, not
+		// that picker is broken.
+		friendly := fmt.Sprintf("Could not load session `%s`: `%v`\n\nA fresh session has been started.", sessionID, err)
+		if strings.Contains(err.Error(), "active in another process") {
+			friendly = fmt.Sprintf("Session `%s` is currently open in another process (local Kiro TUI or another quill instance). Close it there and try again.\n\nA fresh session has been started meanwhile.", sessionID)
+		}
+		return false, friendly
 	}
 
 	if p.store != nil {

@@ -788,15 +788,28 @@ func (h *Handler) handleComponentInteraction(s *discordgo.Session, i *discordgo.
 		if len(data.Values) == 0 {
 			return
 		}
-		msg := command.LoadPickerByID(h.Pool, h.Picker, threadKey, data.Values[0])
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Content:    msg,
-				Components: []discordgo.MessageComponent{},
-				Flags:      discordgo.MessageFlagsEphemeral,
-			},
-		})
+		sessionID := data.Values[0]
+		// LoadPickerByID kills the current conn, spawns a fresh agent,
+		// and calls session/load — that can easily run past Discord's
+		// 3-second interaction deadline, producing a "此交互失敗" UX
+		// failure. Defer the update so Discord accepts the interaction
+		// immediately, then edit the original (ephemeral) message with
+		// the actual result once the load returns.
+		if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		}); err != nil {
+			slog.Debug("pick interaction defer failed", "error", err)
+		}
+		go func() {
+			msg := command.LoadPickerByID(h.Pool, h.Picker, threadKey, sessionID)
+			emptyComponents := []discordgo.MessageComponent{}
+			if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content:    &msg,
+				Components: &emptyComponents,
+			}); err != nil {
+				slog.Debug("pick interaction edit failed", "error", err)
+			}
+		}()
 	}
 }
 
