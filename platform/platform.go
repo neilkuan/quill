@@ -162,15 +162,16 @@ func stripGenericStatusVerb(title string) (string, bool) {
 	return strings.TrimSpace(title[idx:]), true
 }
 
-// FormatSessionFooter returns a small italic footer showing the
-// session's current mode / model for appending to the agent's reply.
-// Returns empty string when both are blank, so callers can
-// unconditionally concatenate it.
+// FormatSessionFooter returns a small footer showing the session's
+// current mode / model for appending to the agent's reply. Returns
+// empty string when both are blank, so callers can unconditionally
+// concatenate it.
 //
-// Platforms vary on markdown rendering, but all three supported here
-// (Discord, Telegram-HTML, Teams) treat `inline code` and `_italic_`
-// the same way so this single shape works everywhere. The leading
-// `\n\n` keeps the footer on its own line.
+// Deliberately avoids italic wrapping around inline code: Telegram's
+// markdown-to-HTML conversion closes italic spans when it hits a
+// backtick, so `_mode: \`x\` · model: \`y\`_` renders with broken
+// spacing. Plain text + inline code works cleanly on Discord,
+// Telegram-HTML and Teams alike.
 func FormatSessionFooter(mode, model string) string {
 	var parts []string
 	if mode != "" {
@@ -182,7 +183,7 @@ func FormatSessionFooter(mode, model string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "\n\n— _" + strings.Join(parts, " · ") + "_"
+	return "\n\n— " + strings.Join(parts, " · ")
 }
 
 // TruncateUTF8 truncates text to at most limit bytes without cutting multi-byte characters.

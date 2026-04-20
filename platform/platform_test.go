@@ -246,9 +246,9 @@ func TestFormatSessionFooter(t *testing.T) {
 		wantSubstr []string
 		empty      bool
 	}{
-		{"both present", "朝比奈實玖瑠學姊", "claude-sonnet-4.6", []string{"mode", "朝比奈實玖瑠學姊", "model", "claude-sonnet-4.6", "·"}, false},
-		{"only mode", "ask", "", []string{"mode", "ask"}, false},
-		{"only model", "", "haiku", []string{"model", "haiku"}, false},
+		{"both present", "朝比奈實玖瑠學姊", "claude-sonnet-4.6", []string{"mode: `朝比奈實玖瑠學姊`", "model: `claude-sonnet-4.6`", "·"}, false},
+		{"only mode", "ask", "", []string{"mode: `ask`"}, false},
+		{"only model", "", "haiku", []string{"model: `haiku`"}, false},
 		{"both empty", "", "", nil, true},
 	}
 	for _, tt := range tests {
@@ -262,6 +262,11 @@ func TestFormatSessionFooter(t *testing.T) {
 			}
 			if !strings.HasPrefix(got, "\n\n") {
 				t.Errorf("footer should start with double newline, got %q", got)
+			}
+			// Italic wrapping is intentionally absent — see docstring;
+			// a plain "_" pair would indicate a regression.
+			if strings.HasPrefix(strings.TrimLeft(got, "\n"), "— _") {
+				t.Errorf("footer must not wrap in italic: %q", got)
 			}
 			for _, s := range tt.wantSubstr {
 				if !strings.Contains(got, s) {
