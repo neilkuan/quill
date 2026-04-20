@@ -261,6 +261,24 @@ func (c *AcpConnection) readLoop(stdout io.Reader) {
 			}
 		}
 
+		// Surface Kiro's silent agent fallback. Kiro emits
+		// `_kiro.dev/agent/not_found` when `--agent <name>` does not
+		// match any installed agent; without this log, users see
+		// wrong-persona responses and wonder why, with no hint that
+		// Kiro substituted another agent behind their back.
+		if msg.Method != nil && *msg.Method == "_kiro.dev/agent/not_found" && msg.Params != nil {
+			var p struct {
+				RequestedAgent string `json:"requestedAgent"`
+				FallbackAgent  string `json:"fallbackAgent"`
+			}
+			if err := json.Unmarshal(*msg.Params, &p); err == nil {
+				slog.Warn("🚨 kiro agent not found, fell back",
+					"requested", p.RequestedAgent,
+					"fallback", p.FallbackAgent,
+					"hint", "check the --agent arg in [agent].args against the agent name in ~/.kiro/agents/*.json")
+			}
+		}
+
 		// Notification → forward to subscriber
 		c.notifyMu.Lock()
 		if c.notifyCh != nil {
