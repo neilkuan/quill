@@ -139,11 +139,35 @@ type ModeSet struct {
 }
 
 // ModelInfo describes one entry of the `availableModels` array in an
-// ACP session setup response. Shape parallels ModeInfo.
+// ACP session setup response. Shape parallels ModeInfo — but note the
+// asymmetric field naming: per ACP spec (and observed with Kiro), the
+// canonical key is `modelId`, not `id`. The custom UnmarshalJSON
+// accepts either so we stay robust across agents that follow older
+// drafts or that reuse the mode shape.
 type ModelInfo struct {
-	ID          string `json:"id"`
+	ID          string `json:"modelId"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+}
+
+func (m *ModelInfo) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ModelID     string `json:"modelId,omitempty"`
+		ID          string `json:"id,omitempty"`
+		Name        string `json:"name,omitempty"`
+		Description string `json:"description,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.ModelID != "" {
+		m.ID = raw.ModelID
+	} else {
+		m.ID = raw.ID
+	}
+	m.Name = raw.Name
+	m.Description = raw.Description
+	return nil
 }
 
 // ModelSet mirrors the `models` object returned by session/new and
@@ -234,9 +258,18 @@ func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
 		return nil
 
 	case "current_model_update":
-		// Mirror of current_mode_update for the model axis. Same dual
-		// shape: flat `currentModelId` or nested `currentModel.id`.
+		// Mirror of current_mode_update for the model axis, but the
+		// model side has more shape variance in the wild: flat
+		// `currentModelId`, flat `modelId` (some Kiro builds), or
+		// nested `currentModel` object. Accept any form so the read
+		// loop stays in sync with the agent regardless.
 		if raw, ok := update["currentModelId"]; ok {
+			var id string
+			if err := json.Unmarshal(raw, &id); err == nil && id != "" {
+				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: id}
+			}
+		}
+		if raw, ok := update["modelId"]; ok {
 			var id string
 			if err := json.Unmarshal(raw, &id); err == nil && id != "" {
 				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: id}
@@ -244,10 +277,16 @@ func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
 		}
 		if raw, ok := update["currentModel"]; ok {
 			var inner struct {
-				ID string `json:"id"`
+				ModelID string `json:"modelId"`
+				ID      string `json:"id"`
 			}
-			if err := json.Unmarshal(raw, &inner); err == nil && inner.ID != "" {
-				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: inner.ID}
+			if err := json.Unmarshal(raw, &inner); err == nil {
+				if inner.ModelID != "" {
+					return &AcpEvent{Type: AcpEventModelUpdate, ModelID: inner.ModelID}
+				}
+				if inner.ID != "" {
+					return &AcpEvent{Type: AcpEventModelUpdate, ModelID: inner.ID}
+				}
 			}
 		}
 		return nil
