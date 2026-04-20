@@ -177,6 +177,39 @@ func TestClassifyNotification_CurrentModeUpdate_MissingID(t *testing.T) {
 	}
 }
 
+func TestClassifyNotification_CurrentModelUpdate_FlatID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update","currentModelId":"haiku"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModelUpdate {
+		t.Fatalf("expected AcpEventModelUpdate, got %+v", evt)
+	}
+	if evt.ModelID != "haiku" {
+		t.Errorf("ModelID = %q, want 'haiku'", evt.ModelID)
+	}
+}
+
+func TestClassifyNotification_CurrentModelUpdate_NestedID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update","currentModel":{"id":"sonnet","name":"Sonnet"}}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModelUpdate {
+		t.Fatalf("expected AcpEventModelUpdate, got %+v", evt)
+	}
+	if evt.ModelID != "sonnet" {
+		t.Errorf("ModelID = %q, want 'sonnet'", evt.ModelID)
+	}
+}
+
+func TestClassifyNotification_CurrentModelUpdate_MissingID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt != nil {
+		t.Fatalf("expected nil when model id is absent, got %+v", evt)
+	}
+}
+
 func TestClassifyNotification_UnknownType(t *testing.T) {
 	msg := makeNotification(t, "some_unknown_event", "", "")
 	evt := ClassifyNotification(msg)

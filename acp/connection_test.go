@@ -461,3 +461,36 @@ func TestConnectionModes_RoundTrip(t *testing.T) {
 		t.Errorf("Modes() must return a defensive copy; got %q", avail2[0].ID)
 	}
 }
+
+func TestConnectionModels_RoundTrip(t *testing.T) {
+	c := &AcpConnection{}
+	avail, cur := c.Models()
+	if len(avail) != 0 || cur != "" {
+		t.Fatalf("fresh conn should have no models, got avail=%v cur=%q", avail, cur)
+	}
+
+	c.setModelState("haiku", []ModelInfo{{ID: "haiku", Name: "Haiku"}, {ID: "sonnet", Name: "Sonnet"}})
+	avail, cur = c.Models()
+	if cur != "haiku" || len(avail) != 2 {
+		t.Fatalf("post-setModelState state wrong: cur=%q avail=%v", cur, avail)
+	}
+
+	c.SetCurrentModel("sonnet")
+	_, cur = c.Models()
+	if cur != "sonnet" {
+		t.Errorf("SetCurrentModel didn't stick: %q", cur)
+	}
+
+	// Nil applyModelSet must preserve state (older agents may omit).
+	c.applyModelSet(nil)
+	avail, cur = c.Models()
+	if cur != "sonnet" || len(avail) != 2 {
+		t.Errorf("nil applyModelSet should preserve state; got cur=%q avail=%v", cur, avail)
+	}
+
+	avail[0].ID = "mutated"
+	avail2, _ := c.Models()
+	if avail2[0].ID != "haiku" {
+		t.Errorf("Models() must return a defensive copy; got %q", avail2[0].ID)
+	}
+}

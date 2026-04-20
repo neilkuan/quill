@@ -37,6 +37,10 @@ func TestParseCommand(t *testing.T) {
 		{"Mode", CmdMode, true},
 		{"mode ask", CmdMode, true},
 		{"mode 2", CmdMode, true},
+		{"model", CmdModel, true},
+		{"Model", CmdModel, true},
+		{"model haiku", CmdModel, true},
+		{"model 2", CmdModel, true},
 		{"session-picker", CmdPicker, true},   // legacy alias for users typing the old form
 		{"Session-Picker", CmdPicker, true},
 		{"session_picker", CmdPicker, true},   // legacy alias (Telegram-friendly spelling)
@@ -245,6 +249,46 @@ func TestJoinModeIDs(t *testing.T) {
 	got := joinModeIDs([]acp.ModeInfo{{ID: "ask"}, {ID: "code"}})
 	if got != "`ask`, `code`" {
 		t.Errorf("joinModeIDs = %q", got)
+	}
+}
+
+func TestFormatModelListing(t *testing.T) {
+	models := []acp.ModelInfo{
+		{ID: "haiku", Name: "Haiku 4.5", Description: "Fast"},
+		{ID: "sonnet", Name: "Sonnet 4.6"},
+		{ID: "bare"},
+		{ID: "kiro-default", Name: "kiro-default"}, // name == id: suppressed
+	}
+	out := formatModelListing("sonnet", models)
+
+	if !strings.Contains(out, "➤") {
+		t.Error("current model should be marked")
+	}
+	if !strings.Contains(out, "`2.` `sonnet`") {
+		t.Errorf("expected index marker: %s", out)
+	}
+	if !strings.Contains(out, "Fast") {
+		t.Errorf("description missing: %s", out)
+	}
+	if strings.Contains(out, "`kiro-default` — kiro-default") {
+		t.Errorf("name duplicating id must be suppressed: %s", out)
+	}
+}
+
+func TestIsKnownModel(t *testing.T) {
+	models := []acp.ModelInfo{{ID: "haiku"}, {ID: "sonnet"}}
+	if !isKnownModel(models, "haiku") {
+		t.Error("haiku should be known")
+	}
+	if isKnownModel(models, "nope") {
+		t.Error("nope should not be known")
+	}
+}
+
+func TestJoinModelIDs(t *testing.T) {
+	got := joinModelIDs([]acp.ModelInfo{{ID: "haiku"}, {ID: "sonnet"}})
+	if got != "`haiku`, `sonnet`" {
+		t.Errorf("joinModelIDs = %q", got)
 	}
 }
 

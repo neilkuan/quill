@@ -19,6 +19,7 @@ const (
 	CmdStop     = "stop"
 	CmdPicker   = "pick"
 	CmdMode     = "mode"
+	CmdModel    = "model"
 )
 
 type Command struct {
@@ -48,7 +49,7 @@ func ParseCommand(text string) (*Command, bool) {
 		name = CmdPicker
 	}
 	known := map[string]bool{
-		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true, CmdPicker: true, CmdMode: true,
+		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true, CmdPicker: true, CmdMode: true, CmdModel: true,
 	}
 	if !known[name] {
 		return nil, false
@@ -468,6 +469,117 @@ func isKnownMode(available []acp.ModeInfo, id string) bool {
 }
 
 func joinModeIDs(available []acp.ModeInfo) string {
+	ids := make([]string, 0, len(available))
+	for _, m := range available {
+		ids = append(ids, "`"+m.ID+"`")
+	}
+	return strings.Join(ids, ", ")
+}
+
+// ModelListing is the data the platform handlers need to render an
+// interactive picker for /model. Mirror of ModeListing.
+type ModelListing struct {
+	Message   string
+	Current   string
+	Available []acp.ModelInfo
+	Err       error
+}
+
+// ListModels returns the model catalogue for a thread so the platform
+// handler can render either a text list or a select/keyboard.
+func ListModels(pool *acp.SessionPool, threadKey string) ModelListing {
+	conn := pool.Connection(threadKey)
+	if conn == nil || !conn.Alive() {
+		return ModelListing{
+			Message: "No active agent session for this thread yet — send a message first, then try `/model` again.",
+			Err:     fmt.Errorf("no active session"),
+		}
+	}
+	available, current := conn.Models()
+	if len(available) == 0 {
+		return ModelListing{
+			Message: "The current agent did not advertise any selectable models.",
+			Current: current,
+			Err:     fmt.Errorf("no models advertised"),
+		}
+	}
+	return ModelListing{
+		Message:   formatModelListing(current, available),
+		Current:   current,
+		Available: available,
+	}
+}
+
+func formatModelListing(current string, available []acp.ModelInfo) string {
+	var sb strings.Builder
+	sb.WriteString("**Available models**\n")
+	for i, m := range available {
+		marker := "  "
+		if m.ID == current {
+			marker = "➤ "
+		}
+		sb.WriteString(fmt.Sprintf("%s`%d.` `%s`", marker, i+1, m.ID))
+		if m.Name != "" && m.Name != m.ID {
+			sb.WriteString(" — ")
+			sb.WriteString(m.Name)
+		}
+		if m.Description != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(m.Description)
+		}
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("\nSwitch with `/model <id>` or `/model <N>`.")
+	return sb.String()
+}
+
+// ExecuteModel sets the thread's active model. Accepts either a model
+// id (exact match against Available) or a 1-based index from the most
+// recent listing.
+func ExecuteModel(pool *acp.SessionPool, threadKey, arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return ListModels(pool, threadKey).Message
+	}
+
+	conn := pool.Connection(threadKey)
+	if conn == nil || !conn.Alive() {
+		return "No active agent session for this thread yet — send a message first, then try `/model` again."
+	}
+	available, current := conn.Models()
+	if len(available) == 0 {
+		return "The current agent did not advertise any selectable models."
+	}
+
+	modelID := arg
+	if n, err := strconv.Atoi(arg); err == nil {
+		if n < 1 || n > len(available) {
+			return fmt.Sprintf("Index %d is out of range — %d model(s) available.", n, len(available))
+		}
+		modelID = available[n-1].ID
+	} else if !isKnownModel(available, modelID) {
+		return fmt.Sprintf("Unknown model `%s`. Available: %s", modelID, joinModelIDs(available))
+	}
+
+	if modelID == current {
+		return fmt.Sprintf("Already using `%s`.", modelID)
+	}
+	if err := conn.SessionSetModel(modelID); err != nil {
+		return fmt.Sprintf("Failed to switch model: `%v`", err)
+	}
+	return fmt.Sprintf("✅ Switched to `%s`.", modelID)
+}
+
+func isKnownModel(available []acp.ModelInfo, id string) bool {
+	for _, m := range available {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func joinModelIDs(available []acp.ModelInfo) string {
 	ids := make([]string, 0, len(available))
 	for _, m := range available {
 		ids = append(ids, "`"+m.ID+"`")

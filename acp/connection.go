@@ -43,6 +43,12 @@ type AcpConnection struct {
 	modeMu         sync.RWMutex
 	AvailableModes []ModeInfo
 	CurrentModeID  string
+
+	// modelMu guards AvailableModels and CurrentModelID — same pattern
+	// as modeMu but for the model axis (session/set_model).
+	modelMu         sync.RWMutex
+	AvailableModels []ModelInfo
+	CurrentModelID  string
 }
 
 // Modes returns a copy of the session's currently advertised modes
@@ -73,6 +79,35 @@ func (c *AcpConnection) SetCurrentMode(id string) {
 	c.modeMu.Lock()
 	defer c.modeMu.Unlock()
 	c.CurrentModeID = id
+}
+
+// Models returns a copy of the session's currently advertised models
+// and the id that is active right now. Safe for concurrent use.
+func (c *AcpConnection) Models() (available []ModelInfo, current string) {
+	c.modelMu.RLock()
+	defer c.modelMu.RUnlock()
+	out := make([]ModelInfo, len(c.AvailableModels))
+	copy(out, c.AvailableModels)
+	return out, c.CurrentModelID
+}
+
+func (c *AcpConnection) setModelState(current string, available []ModelInfo) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	if current != "" {
+		c.CurrentModelID = current
+	}
+	if available != nil {
+		c.AvailableModels = available
+	}
+}
+
+// SetCurrentModel records a model change that arrived via a
+// `current_model_update` notification.
+func (c *AcpConnection) SetCurrentModel(id string) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	c.CurrentModelID = id
 }
 
 // GetLastActive returns the last activity time (safe for concurrent reads).
@@ -207,13 +242,22 @@ func (c *AcpConnection) readLoop(stdout io.Reader) {
 			}
 		}
 
-		// Track session-scoped mode changes before forwarding — the
-		// subscriber may or may not act on the notification, but the
-		// connection itself needs its CurrentModeID kept in sync so
-		// /info and /mode reflect the latest state regardless.
+		// Track session-scoped mode / model changes before forwarding —
+		// the subscriber may or may not act on the notification, but
+		// the connection itself needs its state kept in sync so /info,
+		// /mode and /model reflect the latest values regardless.
 		if msg.Method != nil && *msg.Method == "session/update" {
-			if ev := ClassifyNotification(&msg); ev != nil && ev.Type == AcpEventModeUpdate && ev.ModeID != "" {
-				c.SetCurrentMode(ev.ModeID)
+			if ev := ClassifyNotification(&msg); ev != nil {
+				switch ev.Type {
+				case AcpEventModeUpdate:
+					if ev.ModeID != "" {
+						c.SetCurrentMode(ev.ModeID)
+					}
+				case AcpEventModelUpdate:
+					if ev.ModelID != "" {
+						c.SetCurrentModel(ev.ModelID)
+					}
+				}
 			}
 		}
 
@@ -346,8 +390,9 @@ func (c *AcpConnection) SessionNew(cwd string) (string, error) {
 	}
 
 	var result struct {
-		SessionID string   `json:"sessionId"`
-		Modes     *ModeSet `json:"modes,omitempty"`
+		SessionID string    `json:"sessionId"`
+		Modes     *ModeSet  `json:"modes,omitempty"`
+		Models    *ModelSet `json:"models,omitempty"`
 	}
 	if err := json.Unmarshal(*resp.Result, &result); err != nil {
 		return "", err
@@ -359,6 +404,7 @@ func (c *AcpConnection) SessionNew(cwd string) (string, error) {
 	slog.Info("session created", "session_id", result.SessionID)
 	c.SessionID = result.SessionID
 	c.applyModeSet(result.Modes)
+	c.applyModelSet(result.Models)
 	return result.SessionID, nil
 }
 
@@ -373,6 +419,17 @@ func (c *AcpConnection) applyModeSet(ms *ModeSet) {
 	slog.Info("session modes advertised",
 		"current", ms.CurrentModeID,
 		"available_count", len(ms.AvailableModes))
+}
+
+// applyModelSet mirrors applyModeSet for the model axis.
+func (c *AcpConnection) applyModelSet(ms *ModelSet) {
+	if ms == nil {
+		return
+	}
+	c.setModelState(ms.CurrentModelID, ms.AvailableModels)
+	slog.Info("session models advertised",
+		"current", ms.CurrentModelID,
+		"available_count", len(ms.AvailableModels))
 }
 
 // SessionLoad attempts to resume a previous session by ID.
@@ -405,10 +462,12 @@ func (c *AcpConnection) SessionLoad(sessionID string, cwd string) error {
 
 	if resp.Result != nil {
 		var result struct {
-			Modes *ModeSet `json:"modes,omitempty"`
+			Modes  *ModeSet  `json:"modes,omitempty"`
+			Models *ModelSet `json:"models,omitempty"`
 		}
 		if err := json.Unmarshal(*resp.Result, &result); err == nil {
 			c.applyModeSet(result.Modes)
+			c.applyModelSet(result.Models)
 		}
 	}
 	return nil
@@ -440,6 +499,32 @@ func (c *AcpConnection) SessionSetMode(modeID string) error {
 	// run with the same id and be a no-op.
 	c.SetCurrentMode(modeID)
 	slog.Info("session mode switched", "session_id", c.SessionID, "mode_id", modeID)
+	return nil
+}
+
+// SessionSetModel asks the agent to switch the current session to the
+// given model id. Parallels SessionSetMode: same error shape, same
+// optimistic local update, expects a `current_model_update`
+// notification to reconcile.
+func (c *AcpConnection) SessionSetModel(modelID string) error {
+	if c.SessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	if modelID == "" {
+		return fmt.Errorf("modelId is required")
+	}
+	resp, err := c.sendRequest("session/set_model", map[string]interface{}{
+		"sessionId": c.SessionID,
+		"modelId":   modelID,
+	})
+	if err != nil {
+		return fmt.Errorf("session/set_model failed: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("session/set_model error: %s", resp.Error.Message)
+	}
+	c.SetCurrentModel(modelID)
+	slog.Info("session model switched", "session_id", c.SessionID, "model_id", modelID)
 	return nil
 }
 

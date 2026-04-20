@@ -107,6 +107,7 @@ const (
 	AcpEventToolDone
 	AcpEventStatus
 	AcpEventModeUpdate
+	AcpEventModelUpdate
 )
 
 type AcpEvent struct {
@@ -117,6 +118,9 @@ type AcpEvent struct {
 	// ModeID is the new current mode id carried by a
 	// current_mode_update session notification.
 	ModeID string
+	// ModelID is the new current model id carried by a
+	// current_model_update session notification.
+	ModelID string
 }
 
 // ModeInfo describes one entry of the `availableModes` array in an ACP
@@ -132,6 +136,21 @@ type ModeInfo struct {
 type ModeSet struct {
 	CurrentModeID  string     `json:"currentModeId"`
 	AvailableModes []ModeInfo `json:"availableModes"`
+}
+
+// ModelInfo describes one entry of the `availableModels` array in an
+// ACP session setup response. Shape parallels ModeInfo.
+type ModelInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ModelSet mirrors the `models` object returned by session/new and
+// session/load: which model is active now, and what else is available.
+type ModelSet struct {
+	CurrentModelID  string      `json:"currentModelId"`
+	AvailableModels []ModelInfo `json:"availableModels"`
 }
 
 func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
@@ -210,6 +229,25 @@ func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
 			}
 			if err := json.Unmarshal(raw, &inner); err == nil && inner.ID != "" {
 				return &AcpEvent{Type: AcpEventModeUpdate, ModeID: inner.ID}
+			}
+		}
+		return nil
+
+	case "current_model_update":
+		// Mirror of current_mode_update for the model axis. Same dual
+		// shape: flat `currentModelId` or nested `currentModel.id`.
+		if raw, ok := update["currentModelId"]; ok {
+			var id string
+			if err := json.Unmarshal(raw, &id); err == nil && id != "" {
+				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: id}
+			}
+		}
+		if raw, ok := update["currentModel"]; ok {
+			var inner struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &inner); err == nil && inner.ID != "" {
+				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: inner.ID}
 			}
 		}
 		return nil

@@ -276,6 +276,8 @@ func (h *Handler) handleCommand(activity *Activity, cmd *command.Command) {
 		// hookup, so both `/mode` and `/mode <id>` fall back to the
 		// plain-text listing / switch path.
 		response = command.ExecuteMode(h.Pool, sessionKey, cmd.Args)
+	case command.CmdModel:
+		response = command.ExecuteModel(h.Pool, sessionKey, cmd.Args)
 	default:
 		return
 	}
