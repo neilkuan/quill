@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,10 @@ type Handler struct {
 }
 
 func (h *Handler) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.CallbackQuery != nil {
+		h.handleCallbackQuery(ctx, b, update.CallbackQuery)
+		return
+	}
 	if update.Message == nil {
 		return
 	}
@@ -101,9 +106,14 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 			cmdName = "voice-clear"
 		}
 		if cmd, ok := command.ParseCommand(cmdName); ok {
+			slog.Debug("telegram command dispatched",
+				"raw", cmdName, "name", cmd.Name, "args", cmd.Args,
+				"chat_id", chatID, "user_id", msg.From.ID)
 			h.handleCommand(ctx, b, chatID, threadID, msg, cmd)
 			return
 		}
+		slog.Debug("telegram text looked like a command but was not recognised",
+			"extracted", cmdName, "text", msg.Text, "chat_id", chatID)
 	}
 
 	isPrivate := msg.Chat.Type == models.ChatTypePrivate
@@ -419,7 +429,32 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 		response = command.ExecuteStop(h.Pool, sessionKey)
 	case command.CmdPicker:
 		sessionKey := buildSessionKeyFromChat(chatID, threadID)
-		response = command.ExecutePicker(h.Pool, h.Picker, sessionKey, cmd.Args, h.Pool.WorkingDir())
+		args := strings.TrimSpace(cmd.Args)
+		// Empty args or `all` → interactive keyboard; `/pick <N>`,
+		// `/pick load <id>` and typos keep the text path so the
+		// existing workflow is unchanged.
+		bypassCWD := strings.EqualFold(args, "all")
+		if args == "" || bypassCWD {
+			h.sendPickPicker(ctx, b, chatID, threadID, msg, sessionKey, bypassCWD)
+			return
+		}
+		response = command.ExecutePicker(h.Pool, h.Picker, sessionKey, args, h.Pool.WorkingDir())
+	case command.CmdMode:
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
+		if strings.TrimSpace(cmd.Args) != "" {
+			response = command.ExecuteMode(h.Pool, sessionKey, cmd.Args)
+			break
+		}
+		h.sendModePicker(ctx, b, chatID, threadID, msg, sessionKey)
+		return
+	case command.CmdModel:
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
+		if strings.TrimSpace(cmd.Args) != "" {
+			response = command.ExecuteModel(h.Pool, sessionKey, cmd.Args)
+			break
+		}
+		h.sendModelPicker(ctx, b, chatID, threadID, msg, sessionKey)
+		return
 	default:
 		return
 	}
@@ -445,6 +480,260 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 				ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 			})
 		}
+	}
+}
+
+// modeCallbackPrefix marks callback_data produced by the /mode inline
+// keyboard. Format: "mode|<sessionKey>|<modeID>". Session keys and
+// mode ids emitted by Kiro do not contain the `|` separator, and the
+// whole payload must fit into Telegram's 64-byte callback_data cap
+// (session key ~22 bytes + mode id ~20 bytes + prefix 5 = 47 typical).
+const modeCallbackPrefix = "mode|"
+
+// modelCallbackPrefix is the /model analogue of modeCallbackPrefix.
+// Format: "model|<sessionKey>|<modelID>".
+const modelCallbackPrefix = "model|"
+
+// pickCallbackPrefix is the /pick analogue, but carries a 1-based
+// index into the cached listing (not the full session id) because
+// session UUIDs would blow Telegram's 64-byte callback_data cap for
+// typical threadKeys. Format: "pick|<sessionKey>|<N>".
+const pickCallbackPrefix = "pick|"
+
+// telegramCallbackDataMax is Telegram's hard limit for
+// callback_data payloads (bytes). The BotAPI rejects buttons above
+// this and we lose the whole SendMessage if we try anyway, so
+// pickers defensively skip entries that would overflow instead.
+const telegramCallbackDataMax = 64
+
+// sendModePicker posts a message with an inline keyboard, one button
+// per available mode, so users can tap to switch instead of typing
+// `/mode <id>`. The current mode is marked with ➤ in the button label.
+func (h *Handler) sendModePicker(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msg *models.Message, sessionKey string) {
+	listing := command.ListModes(h.Pool, sessionKey)
+	if listing.Err != nil || len(listing.Available) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            listing.Message,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
+	}
+
+	rows := make([][]models.InlineKeyboardButton, 0, len(listing.Available))
+	var skipped int
+	for _, m := range listing.Available {
+		label := m.Name
+		if label == "" {
+			label = m.ID
+		}
+		if m.ID == listing.Current {
+			label = "➤ " + label
+		}
+		cb := modeCallbackPrefix + sessionKey + "|" + m.ID
+		if len(cb) > telegramCallbackDataMax {
+			// Skip rather than lose the whole SendMessage to a too-long
+			// callback_data. This is rare — only hit when thread key +
+			// mode id exceed ~60 bytes combined — but we log so users
+			// at least have a breadcrumb if a mode vanishes from the UI.
+			slog.Warn("skipping telegram mode button: callback_data over cap",
+				"mode_id", m.ID, "len", len(cb), "cap", telegramCallbackDataMax)
+			skipped++
+			continue
+		}
+		rows = append(rows, []models.InlineKeyboardButton{{
+			Text:         label,
+			CallbackData: cb,
+		}})
+	}
+	if len(rows) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            fmt.Sprintf("No mode fits in an interactive button (skipped %d). Use <code>/mode &lt;id&gt;</code> directly instead.", skipped),
+			ParseMode:       models.ParseModeHTML,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Text:            fmt.Sprintf("Select a mode (current: <code>%s</code>)", listing.Current),
+		ParseMode:       models.ParseModeHTML,
+		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		ReplyMarkup:     &models.InlineKeyboardMarkup{InlineKeyboard: rows},
+	})
+}
+
+// sendModelPicker is the /model analogue of sendModePicker.
+func (h *Handler) sendModelPicker(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msg *models.Message, sessionKey string) {
+	listing := command.ListModels(h.Pool, sessionKey)
+	if listing.Err != nil || len(listing.Available) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            listing.Message,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
+	}
+
+	rows := make([][]models.InlineKeyboardButton, 0, len(listing.Available))
+	var skipped int
+	for _, m := range listing.Available {
+		label := m.Name
+		if label == "" {
+			label = m.ID
+		}
+		if m.ID == listing.Current {
+			label = "➤ " + label
+		}
+		cb := modelCallbackPrefix + sessionKey + "|" + m.ID
+		if len(cb) > telegramCallbackDataMax {
+			slog.Warn("skipping telegram model button: callback_data over cap",
+				"model_id", m.ID, "len", len(cb), "cap", telegramCallbackDataMax)
+			skipped++
+			continue
+		}
+		rows = append(rows, []models.InlineKeyboardButton{{
+			Text:         label,
+			CallbackData: cb,
+		}})
+	}
+	if len(rows) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            fmt.Sprintf("No model fits in an interactive button (skipped %d). Use <code>/model &lt;id&gt;</code> directly instead.", skipped),
+			ParseMode:       models.ParseModeHTML,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Text:            fmt.Sprintf("Select a model (current: <code>%s</code>)", listing.Current),
+		ParseMode:       models.ParseModeHTML,
+		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		ReplyMarkup:     &models.InlineKeyboardMarkup{InlineKeyboard: rows},
+	})
+}
+
+// sendPickPicker renders /pick as an InlineKeyboard. Each button
+// carries the 1-based index of the session in the cached listing —
+// the same cache /pick <N> reads — so a tap is resolved by
+// command.LoadPickerByIndex.
+func (h *Handler) sendPickPicker(ctx context.Context, b *bot.Bot, chatID int64, threadID int, msg *models.Message, sessionKey string, bypassCWD bool) {
+	cwd := h.Pool.WorkingDir()
+	listing := command.ListPickerSessions(h.Picker, sessionKey, cwd, bypassCWD)
+	if listing.Err != nil || len(listing.Sessions) == 0 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Text:            listing.Message,
+			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		})
+		return
+	}
+
+	rows := make([][]models.InlineKeyboardButton, 0, len(listing.Sessions))
+	for i, sess := range listing.Sessions {
+		title := sess.Title
+		if title == "" {
+			title = "(untitled)"
+		}
+		// Telegram InlineKeyboardButton.Text has a practical 64-char
+		// visual cap; truncating keeps long titles readable.
+		label := fmt.Sprintf("%d. %s", i+1, truncateForButton(title, 48))
+		rows = append(rows, []models.InlineKeyboardButton{{
+			Text:         label,
+			CallbackData: pickCallbackPrefix + sessionKey + "|" + strconv.Itoa(i+1),
+		}})
+	}
+
+	header := fmt.Sprintf("Select a session (%s)", listing.AgentType)
+	if bypassCWD {
+		header += " — all cwds"
+	} else if listing.CWD != "" {
+		header += fmt.Sprintf(" — cwd: <code>%s</code>", listing.CWD)
+	}
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Text:            header,
+		ParseMode:       models.ParseModeHTML,
+		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
+		ReplyMarkup:     &models.InlineKeyboardMarkup{InlineKeyboard: rows},
+	})
+}
+
+func truncateForButton(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// handleCallbackQuery routes button taps from inline keyboards. The
+// known sources are /mode ("mode|"), /model ("model|") and /pick
+// ("pick|"); unknown callback_data is acknowledged silently so the
+// spinner on the client clears without producing user-visible noise.
+func (h *Handler) handleCallbackQuery(ctx context.Context, b *bot.Bot, cq *models.CallbackQuery) {
+	data := cq.Data
+	// Always answer first, even on unrelated callbacks, otherwise the
+	// Telegram client keeps the loading spinner on the button.
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID})
+
+	// Order matters: "model|" has to be checked before "mode|" because
+	// "model" contains "mode" as a prefix-string (though not as our
+	// full prefix including "|", the safer check is to test the longer
+	// prefix first anyway in case the format ever changes).
+	var resultMsg string
+	switch {
+	case strings.HasPrefix(data, modelCallbackPrefix):
+		rest := strings.TrimPrefix(data, modelCallbackPrefix)
+		parts := strings.SplitN(rest, "|", 2)
+		if len(parts) != 2 {
+			return
+		}
+		resultMsg = command.ExecuteModel(h.Pool, parts[0], parts[1])
+	case strings.HasPrefix(data, modeCallbackPrefix):
+		rest := strings.TrimPrefix(data, modeCallbackPrefix)
+		parts := strings.SplitN(rest, "|", 2)
+		if len(parts) != 2 {
+			return
+		}
+		resultMsg = command.ExecuteMode(h.Pool, parts[0], parts[1])
+	case strings.HasPrefix(data, pickCallbackPrefix):
+		rest := strings.TrimPrefix(data, pickCallbackPrefix)
+		parts := strings.SplitN(rest, "|", 2)
+		if len(parts) != 2 {
+			return
+		}
+		n, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return
+		}
+		resultMsg = command.LoadPickerByIndex(h.Pool, parts[0], n)
+	default:
+		return
+	}
+
+	if cq.Message.Message != nil {
+		chatID := cq.Message.Message.Chat.ID
+		msgID := cq.Message.Message.ID
+		b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:      chatID,
+			MessageID:   msgID,
+			Text:        resultMsg,
+			ReplyMarkup: nil, // drop the keyboard — prevents a second tap re-firing
+		})
 	}
 }
 
@@ -616,6 +905,11 @@ func (h *Handler) streamPrompt(
 		} else if cancelled {
 			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
+		// Append a mode/model footer so users know which persona and
+		// backend produced the reply without having to run /info.
+		_, mode := conn.Modes()
+		_, model := conn.Models()
+		finalContent += platform.FormatSessionFooter(mode, model)
 		// Rewrite GFM tables before splitting — Telegram Markdown v1 doesn't
 		// render table syntax, so we wrap them in fenced blocks (or convert
 		// to bullets) for readable rendering. Skipped during streaming preview.
@@ -739,12 +1033,15 @@ func buildSessionKeyFromChat(chatID int64, threadID int) string {
 	return fmt.Sprintf("tg:%d", chatID)
 }
 
-// extractCommand returns the bot command name (without /) if the message starts
-// with a /command entity, or empty string otherwise.
 // extractCommand returns the command and any trailing args exactly as
 // ParseCommand expects (e.g. "pick 3"). It strips the leading slash
 // and any `@botname` suffix from the command, then appends whatever
-// text follows the entity so numeric or string arguments are preserved.
+// text follows so numeric or string arguments are preserved.
+//
+// Prefers the bot_command entity Telegram attaches to /commands, but
+// falls back to parsing msg.Text directly when no entity is present —
+// this happens in edge cases such as captions copied as text or
+// forwarded commands, and the fallback is cheap enough to always run.
 func extractCommand(msg *models.Message) string {
 	for _, e := range msg.Entities {
 		if e.Type == models.MessageEntityTypeBotCommand && e.Offset == 0 {
@@ -763,7 +1060,31 @@ func extractCommand(msg *models.Message) string {
 			return cmd
 		}
 	}
-	return ""
+	// Fallback: text starts with `/` but Telegram did not attach a
+	// bot_command entity (observed for some clients / forwarded
+	// messages). Only the first whitespace-delimited token is treated
+	// as the command name, to keep shapes like "/mode ask" working.
+	text := strings.TrimLeft(msg.Text, " \t")
+	if !strings.HasPrefix(text, "/") {
+		return ""
+	}
+	text = text[1:]
+	head := text
+	rest := ""
+	if idx := strings.IndexAny(text, " \t"); idx != -1 {
+		head = text[:idx]
+		rest = strings.TrimLeft(text[idx:], " \t")
+	}
+	if idx := strings.Index(head, "@"); idx != -1 {
+		head = head[:idx]
+	}
+	if head == "" {
+		return ""
+	}
+	if rest != "" {
+		return head + " " + rest
+	}
+	return head
 }
 
 func isBotMentioned(msg *models.Message, botUsername string) bool {

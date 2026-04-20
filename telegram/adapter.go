@@ -134,6 +134,8 @@ func (a *Adapter) Start() error {
 			{Command: "resume", Description: "Attempt to restore a previous session for this chat"},
 			{Command: "stop", Description: "Interrupt the agent's current reply (session kept alive)"},
 			{Command: "pick", Description: "Browse and load historical agent sessions"},
+			{Command: "mode", Description: "List or switch the session's agent mode"},
+			{Command: "model", Description: "List or switch the session's LLM model"},
 		},
 	})
 	if err != nil {

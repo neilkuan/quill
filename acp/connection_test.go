@@ -422,3 +422,75 @@ func TestStopReason(t *testing.T) {
 		})
 	}
 }
+
+func TestConnectionModes_RoundTrip(t *testing.T) {
+	c := &AcpConnection{}
+	// Fresh conn has no modes.
+	avail, cur := c.Modes()
+	if len(avail) != 0 || cur != "" {
+		t.Fatalf("fresh conn should have no modes, got avail=%v cur=%q", avail, cur)
+	}
+
+	c.setModeState("ask", []ModeInfo{{ID: "ask", Name: "Ask"}, {ID: "code", Name: "Code"}})
+	avail, cur = c.Modes()
+	if cur != "ask" || len(avail) != 2 {
+		t.Fatalf("post-setModeState state wrong: cur=%q avail=%v", cur, avail)
+	}
+
+	// SetCurrentMode simulates a current_mode_update notification
+	// arriving mid-session — only the active id changes.
+	c.SetCurrentMode("code")
+	_, cur = c.Modes()
+	if cur != "code" {
+		t.Errorf("SetCurrentMode didn't stick: %q", cur)
+	}
+
+	// applyModeSet with nil is a no-op: older agents that omit the
+	// modes field from session/new must not clobber prior state.
+	c.applyModeSet(nil)
+	avail, cur = c.Modes()
+	if cur != "code" || len(avail) != 2 {
+		t.Errorf("nil applyModeSet should preserve state; got cur=%q avail=%v", cur, avail)
+	}
+
+	// Modes() must return a defensive copy — mutating the returned
+	// slice cannot reach the connection's internal state.
+	avail[0].ID = "mutated"
+	avail2, _ := c.Modes()
+	if avail2[0].ID != "ask" {
+		t.Errorf("Modes() must return a defensive copy; got %q", avail2[0].ID)
+	}
+}
+
+func TestConnectionModels_RoundTrip(t *testing.T) {
+	c := &AcpConnection{}
+	avail, cur := c.Models()
+	if len(avail) != 0 || cur != "" {
+		t.Fatalf("fresh conn should have no models, got avail=%v cur=%q", avail, cur)
+	}
+
+	c.setModelState("haiku", []ModelInfo{{ID: "haiku", Name: "Haiku"}, {ID: "sonnet", Name: "Sonnet"}})
+	avail, cur = c.Models()
+	if cur != "haiku" || len(avail) != 2 {
+		t.Fatalf("post-setModelState state wrong: cur=%q avail=%v", cur, avail)
+	}
+
+	c.SetCurrentModel("sonnet")
+	_, cur = c.Models()
+	if cur != "sonnet" {
+		t.Errorf("SetCurrentModel didn't stick: %q", cur)
+	}
+
+	// Nil applyModelSet must preserve state (older agents may omit).
+	c.applyModelSet(nil)
+	avail, cur = c.Models()
+	if cur != "sonnet" || len(avail) != 2 {
+		t.Errorf("nil applyModelSet should preserve state; got cur=%q avail=%v", cur, avail)
+	}
+
+	avail[0].ID = "mutated"
+	avail2, _ := c.Models()
+	if avail2[0].ID != "haiku" {
+		t.Errorf("Models() must return a defensive copy; got %q", avail2[0].ID)
+	}
+}

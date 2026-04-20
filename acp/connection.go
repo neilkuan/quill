@@ -36,6 +36,78 @@ type AcpConnection struct {
 	WasResumed     bool // true when session was restored via session/load (persistent, for /info)
 	CanLoadSession bool // true when agent advertises loadSession capability
 	alive          atomic.Bool
+
+	// modeMu guards AvailableModes and CurrentModeID so the read loop
+	// (which reacts to `current_mode_update` notifications) and the
+	// command/user goroutines (which set and render modes) do not race.
+	modeMu         sync.RWMutex
+	AvailableModes []ModeInfo
+	CurrentModeID  string
+
+	// modelMu guards AvailableModels and CurrentModelID — same pattern
+	// as modeMu but for the model axis (session/set_model).
+	modelMu         sync.RWMutex
+	AvailableModels []ModelInfo
+	CurrentModelID  string
+}
+
+// Modes returns a copy of the session's currently advertised modes
+// and the id that is active right now. Safe for concurrent use.
+func (c *AcpConnection) Modes() (available []ModeInfo, current string) {
+	c.modeMu.RLock()
+	defer c.modeMu.RUnlock()
+	out := make([]ModeInfo, len(c.AvailableModes))
+	copy(out, c.AvailableModes)
+	return out, c.CurrentModeID
+}
+
+func (c *AcpConnection) setModeState(current string, available []ModeInfo) {
+	c.modeMu.Lock()
+	defer c.modeMu.Unlock()
+	if current != "" {
+		c.CurrentModeID = current
+	}
+	if available != nil {
+		c.AvailableModes = available
+	}
+}
+
+// SetCurrentMode records a mode change that arrived via a
+// `current_mode_update` notification. The available-modes list is
+// untouched because the notification payload only carries the new id.
+func (c *AcpConnection) SetCurrentMode(id string) {
+	c.modeMu.Lock()
+	defer c.modeMu.Unlock()
+	c.CurrentModeID = id
+}
+
+// Models returns a copy of the session's currently advertised models
+// and the id that is active right now. Safe for concurrent use.
+func (c *AcpConnection) Models() (available []ModelInfo, current string) {
+	c.modelMu.RLock()
+	defer c.modelMu.RUnlock()
+	out := make([]ModelInfo, len(c.AvailableModels))
+	copy(out, c.AvailableModels)
+	return out, c.CurrentModelID
+}
+
+func (c *AcpConnection) setModelState(current string, available []ModelInfo) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	if current != "" {
+		c.CurrentModelID = current
+	}
+	if available != nil {
+		c.AvailableModels = available
+	}
+}
+
+// SetCurrentModel records a model change that arrived via a
+// `current_model_update` notification.
+func (c *AcpConnection) SetCurrentModel(id string) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	c.CurrentModelID = id
 }
 
 // GetLastActive returns the last activity time (safe for concurrent reads).
@@ -170,6 +242,43 @@ func (c *AcpConnection) readLoop(stdout io.Reader) {
 			}
 		}
 
+		// Track session-scoped mode / model changes before forwarding —
+		// the subscriber may or may not act on the notification, but
+		// the connection itself needs its state kept in sync so /info,
+		// /mode and /model reflect the latest values regardless.
+		if msg.Method != nil && *msg.Method == "session/update" {
+			if ev := ClassifyNotification(&msg); ev != nil {
+				switch ev.Type {
+				case AcpEventModeUpdate:
+					if ev.ModeID != "" {
+						c.SetCurrentMode(ev.ModeID)
+					}
+				case AcpEventModelUpdate:
+					if ev.ModelID != "" {
+						c.SetCurrentModel(ev.ModelID)
+					}
+				}
+			}
+		}
+
+		// Surface Kiro's silent agent fallback. Kiro emits
+		// `_kiro.dev/agent/not_found` when `--agent <name>` does not
+		// match any installed agent; without this log, users see
+		// wrong-persona responses and wonder why, with no hint that
+		// Kiro substituted another agent behind their back.
+		if msg.Method != nil && *msg.Method == "_kiro.dev/agent/not_found" && msg.Params != nil {
+			var p struct {
+				RequestedAgent string `json:"requestedAgent"`
+				FallbackAgent  string `json:"fallbackAgent"`
+			}
+			if err := json.Unmarshal(*msg.Params, &p); err == nil {
+				slog.Warn("🚨 kiro agent not found, fell back",
+					"requested", p.RequestedAgent,
+					"fallback", p.FallbackAgent,
+					"hint", "check the --agent arg in [agent].args against the agent name in ~/.kiro/agents/*.json")
+			}
+		}
+
 		// Notification → forward to subscriber
 		c.notifyMu.Lock()
 		if c.notifyCh != nil {
@@ -299,7 +408,9 @@ func (c *AcpConnection) SessionNew(cwd string) (string, error) {
 	}
 
 	var result struct {
-		SessionID string `json:"sessionId"`
+		SessionID string    `json:"sessionId"`
+		Modes     *ModeSet  `json:"modes,omitempty"`
+		Models    *ModelSet `json:"models,omitempty"`
 	}
 	if err := json.Unmarshal(*resp.Result, &result); err != nil {
 		return "", err
@@ -310,7 +421,33 @@ func (c *AcpConnection) SessionNew(cwd string) (string, error) {
 
 	slog.Info("session created", "session_id", result.SessionID)
 	c.SessionID = result.SessionID
+	c.applyModeSet(result.Modes)
+	c.applyModelSet(result.Models)
 	return result.SessionID, nil
+}
+
+// applyModeSet stashes whatever `modes` object the agent returned from
+// session/new or session/load. When the response omits the field (older
+// agents), the previous state is preserved.
+func (c *AcpConnection) applyModeSet(ms *ModeSet) {
+	if ms == nil {
+		return
+	}
+	c.setModeState(ms.CurrentModeID, ms.AvailableModes)
+	slog.Info("session modes advertised",
+		"current", ms.CurrentModeID,
+		"available_count", len(ms.AvailableModes))
+}
+
+// applyModelSet mirrors applyModeSet for the model axis.
+func (c *AcpConnection) applyModelSet(ms *ModelSet) {
+	if ms == nil {
+		return
+	}
+	c.setModelState(ms.CurrentModelID, ms.AvailableModels)
+	slog.Info("session models advertised",
+		"current", ms.CurrentModelID,
+		"available_count", len(ms.AvailableModels))
 }
 
 // SessionLoad attempts to resume a previous session by ID.
@@ -340,6 +477,72 @@ func (c *AcpConnection) SessionLoad(sessionID string, cwd string) error {
 	c.SessionID = sessionID
 	c.SessionResumed = true
 	c.WasResumed = true
+
+	if resp.Result != nil {
+		var result struct {
+			Modes  *ModeSet  `json:"modes,omitempty"`
+			Models *ModelSet `json:"models,omitempty"`
+		}
+		if err := json.Unmarshal(*resp.Result, &result); err == nil {
+			c.applyModeSet(result.Modes)
+			c.applyModelSet(result.Models)
+		}
+	}
+	return nil
+}
+
+// SessionSetMode asks the agent to switch the current session to the
+// given mode. The agent is expected to emit a `current_mode_update`
+// session notification on success, which the read loop uses to keep
+// CurrentModeID in sync.
+func (c *AcpConnection) SessionSetMode(modeID string) error {
+	if c.SessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	if modeID == "" {
+		return fmt.Errorf("modeId is required")
+	}
+	resp, err := c.sendRequest("session/set_mode", map[string]interface{}{
+		"sessionId": c.SessionID,
+		"modeId":    modeID,
+	})
+	if err != nil {
+		return fmt.Errorf("session/set_mode failed: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("session/set_mode error: %s", resp.Error.Message)
+	}
+	// Optimistically reflect the change locally — if the agent also
+	// emits a `current_mode_update` notification, SetCurrentMode will
+	// run with the same id and be a no-op.
+	c.SetCurrentMode(modeID)
+	slog.Info("session mode switched", "session_id", c.SessionID, "mode_id", modeID)
+	return nil
+}
+
+// SessionSetModel asks the agent to switch the current session to the
+// given model id. Parallels SessionSetMode: same error shape, same
+// optimistic local update, expects a `current_model_update`
+// notification to reconcile.
+func (c *AcpConnection) SessionSetModel(modelID string) error {
+	if c.SessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	if modelID == "" {
+		return fmt.Errorf("modelId is required")
+	}
+	resp, err := c.sendRequest("session/set_model", map[string]interface{}{
+		"sessionId": c.SessionID,
+		"modelId":   modelID,
+	})
+	if err != nil {
+		return fmt.Errorf("session/set_model failed: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("session/set_model error: %s", resp.Error.Message)
+	}
+	c.SetCurrentModel(modelID)
+	slog.Info("session model switched", "session_id", c.SessionID, "model_id", modelID)
 	return nil
 }
 

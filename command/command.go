@@ -18,6 +18,8 @@ const (
 	CmdInfo     = "info"
 	CmdStop     = "stop"
 	CmdPicker   = "pick"
+	CmdMode     = "mode"
+	CmdModel    = "model"
 )
 
 type Command struct {
@@ -47,7 +49,7 @@ func ParseCommand(text string) (*Command, bool) {
 		name = CmdPicker
 	}
 	known := map[string]bool{
-		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true, CmdPicker: true,
+		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true, CmdPicker: true, CmdMode: true, CmdModel: true,
 	}
 	if !known[name] {
 		return nil, false
@@ -227,6 +229,64 @@ func getPickerListing(threadKey string) ([]sessionpicker.Session, bool) {
 	return e.sessions, true
 }
 
+// PickerListing is the data the platform handlers need to render an
+// interactive session picker for /pick. Platforms that can't render a
+// widget can still show `Message` as a text fallback.
+type PickerListing struct {
+	Message   string                  // human-readable listing (also used as text fallback)
+	Sessions  []sessionpicker.Session // the actual candidates, zero-indexed
+	AgentType string                  // e.g. "kiro-cli", "claude-agent-acp"
+	CWD       string                  // the cwd filter used (empty when bypassed)
+	BypassCWD bool                    // true when `all` was requested
+	// Err is non-nil when the listing could not be produced (picker
+	// unsupported or list call failed). Platforms should surface
+	// Message and skip rendering the picker.
+	Err error
+}
+
+// ListPickerSessions is the data-only counterpart to ExecutePicker's
+// list path. It caches the result so a subsequent /pick <N> (or a
+// callback-data tap carrying an index) resolves to the same session
+// list. When picker is nil, a PickerListing with Err set and a
+// friendly Message is returned — platforms should render the text
+// and skip the widget.
+func ListPickerSessions(picker sessionpicker.Picker, threadKey, cwdFilter string, bypassCWD bool) PickerListing {
+	if picker == nil {
+		msg := "Session picker is not supported for the current agent backend."
+		return PickerListing{Message: msg, Err: fmt.Errorf("picker unavailable")}
+	}
+	cwd := cwdFilter
+	limit := pickerListLimit
+	if bypassCWD {
+		cwd = ""
+		limit = pickerListMaxAll
+	}
+	listing := PickerListing{AgentType: picker.AgentType(), CWD: cwd, BypassCWD: bypassCWD}
+	listing.Message = pickerListResponse(picker, threadKey, cwd, limit, bypassCWD)
+	// Re-read the cache that pickerListResponse just populated so the
+	// caller can iterate Sessions without making a second picker.List
+	// call (which would race against the cache and could return a
+	// different slice ordering).
+	if cached, ok := getPickerListing(threadKey); ok {
+		listing.Sessions = cached
+	}
+	return listing
+}
+
+// LoadPickerByIndex is the shared resume-by-cached-index path. Used
+// by both the text `/pick <N>` and platform callbacks that carry an
+// index in the callback data.
+func LoadPickerByIndex(pool *acp.SessionPool, threadKey string, n int) string {
+	return pickerLoadByIndex(pool, threadKey, n)
+}
+
+// LoadPickerByID is the shared resume-by-full-id path. Used by
+// `/pick load <id>` and by Discord SelectMenu values (which carry
+// the full id directly).
+func LoadPickerByID(pool *acp.SessionPool, picker sessionpicker.Picker, threadKey, id string) string {
+	return pickerLoadByID(pool, picker, threadKey, id)
+}
+
 // ExecutePicker handles /pick for a chat thread. args is
 // the trimmed argument string after the command name; cwdFilter is
 // usually the agent pool's working_dir so the default listing stays
@@ -352,6 +412,237 @@ func pickerLoadByID(pool *acp.SessionPool, picker sessionpicker.Picker, threadKe
 	}
 	_, msg := pool.LoadSessionForThread(threadKey, id, cwd)
 	return msg
+}
+
+// ModeListing is the data the platform handlers need to render an
+// interactive picker for /mode. When interactive UI is not available
+// the text-only summary (`Message`) is shown instead.
+type ModeListing struct {
+	Message   string        // human-readable fallback text
+	Current   string        // current mode id (may be "")
+	Available []acp.ModeInfo
+	// Err is non-nil when the listing could not be produced (no
+	// session, no modes advertised, agent unresponsive). Platform
+	// handlers should surface this via Message and skip any UI.
+	Err error
+}
+
+// ListModes returns the mode catalogue for a thread so the platform
+// handler can render either a text list or a select/keyboard. It
+// performs no mutation — use ExecuteMode to actually switch.
+func ListModes(pool *acp.SessionPool, threadKey string) ModeListing {
+	conn := pool.Connection(threadKey)
+	if conn == nil || !conn.Alive() {
+		return ModeListing{
+			Message: "No active agent session for this thread yet — send a message first, then try `/mode` again.",
+			Err:     fmt.Errorf("no active session"),
+		}
+	}
+	available, current := conn.Modes()
+	if len(available) == 0 {
+		return ModeListing{
+			Message: "The current agent did not advertise any selectable modes.",
+			Current: current,
+			Err:     fmt.Errorf("no modes advertised"),
+		}
+	}
+	return ModeListing{
+		Message:   formatModeListing(current, available),
+		Current:   current,
+		Available: available,
+	}
+}
+
+func formatModeListing(current string, available []acp.ModeInfo) string {
+	var sb strings.Builder
+	sb.WriteString("**Available modes**\n")
+	for i, m := range available {
+		marker := "  "
+		if m.ID == current {
+			marker = "➤ "
+		}
+		sb.WriteString(fmt.Sprintf("%s`%d.` `%s`", marker, i+1, m.ID))
+		// Only render the name when it differs from the id — for agents
+		// like Kiro, name often equals id (e.g. both are the agent
+		// profile name), and showing "`foo` — foo" is just noise.
+		if m.Name != "" && m.Name != m.ID {
+			sb.WriteString(" — ")
+			sb.WriteString(m.Name)
+		}
+		if m.Description != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(m.Description)
+		}
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("\nSwitch with `/mode <id>` or `/mode <N>`.")
+	return sb.String()
+}
+
+// ExecuteMode sets the thread's active mode. Accepts either a mode id
+// (exact match against Available) or a 1-based index from the most
+// recent listing. Returns a user-facing confirmation / error string.
+func ExecuteMode(pool *acp.SessionPool, threadKey, arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return ListModes(pool, threadKey).Message
+	}
+
+	conn := pool.Connection(threadKey)
+	if conn == nil || !conn.Alive() {
+		return "No active agent session for this thread yet — send a message first, then try `/mode` again."
+	}
+	available, current := conn.Modes()
+	if len(available) == 0 {
+		return "The current agent did not advertise any selectable modes."
+	}
+
+	// Numeric arg resolves against the advertised list.
+	modeID := arg
+	if n, err := strconv.Atoi(arg); err == nil {
+		if n < 1 || n > len(available) {
+			return fmt.Sprintf("Index %d is out of range — %d mode(s) available.", n, len(available))
+		}
+		modeID = available[n-1].ID
+	} else if !isKnownMode(available, modeID) {
+		return fmt.Sprintf("Unknown mode `%s`. Available: %s", modeID, joinModeIDs(available))
+	}
+
+	if modeID == current {
+		return fmt.Sprintf("Already in `%s`.", modeID)
+	}
+	if err := conn.SessionSetMode(modeID); err != nil {
+		return fmt.Sprintf("Failed to switch mode: `%v`", err)
+	}
+	return fmt.Sprintf("✅ Switched to `%s`.", modeID)
+}
+
+func isKnownMode(available []acp.ModeInfo, id string) bool {
+	for _, m := range available {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func joinModeIDs(available []acp.ModeInfo) string {
+	ids := make([]string, 0, len(available))
+	for _, m := range available {
+		ids = append(ids, "`"+m.ID+"`")
+	}
+	return strings.Join(ids, ", ")
+}
+
+// ModelListing is the data the platform handlers need to render an
+// interactive picker for /model. Mirror of ModeListing.
+type ModelListing struct {
+	Message   string
+	Current   string
+	Available []acp.ModelInfo
+	Err       error
+}
+
+// ListModels returns the model catalogue for a thread so the platform
+// handler can render either a text list or a select/keyboard.
+func ListModels(pool *acp.SessionPool, threadKey string) ModelListing {
+	conn := pool.Connection(threadKey)
+	if conn == nil || !conn.Alive() {
+		return ModelListing{
+			Message: "No active agent session for this thread yet — send a message first, then try `/model` again.",
+			Err:     fmt.Errorf("no active session"),
+		}
+	}
+	available, current := conn.Models()
+	if len(available) == 0 {
+		return ModelListing{
+			Message: "The current agent did not advertise any selectable models.",
+			Current: current,
+			Err:     fmt.Errorf("no models advertised"),
+		}
+	}
+	return ModelListing{
+		Message:   formatModelListing(current, available),
+		Current:   current,
+		Available: available,
+	}
+}
+
+func formatModelListing(current string, available []acp.ModelInfo) string {
+	var sb strings.Builder
+	sb.WriteString("**Available models**\n")
+	for i, m := range available {
+		marker := "  "
+		if m.ID == current {
+			marker = "➤ "
+		}
+		sb.WriteString(fmt.Sprintf("%s`%d.` `%s`", marker, i+1, m.ID))
+		if m.Name != "" && m.Name != m.ID {
+			sb.WriteString(" — ")
+			sb.WriteString(m.Name)
+		}
+		if m.Description != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(m.Description)
+		}
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("\nSwitch with `/model <id>` or `/model <N>`.")
+	return sb.String()
+}
+
+// ExecuteModel sets the thread's active model. Accepts either a model
+// id (exact match against Available) or a 1-based index from the most
+// recent listing.
+func ExecuteModel(pool *acp.SessionPool, threadKey, arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return ListModels(pool, threadKey).Message
+	}
+
+	conn := pool.Connection(threadKey)
+	if conn == nil || !conn.Alive() {
+		return "No active agent session for this thread yet — send a message first, then try `/model` again."
+	}
+	available, current := conn.Models()
+	if len(available) == 0 {
+		return "The current agent did not advertise any selectable models."
+	}
+
+	modelID := arg
+	if n, err := strconv.Atoi(arg); err == nil {
+		if n < 1 || n > len(available) {
+			return fmt.Sprintf("Index %d is out of range — %d model(s) available.", n, len(available))
+		}
+		modelID = available[n-1].ID
+	} else if !isKnownModel(available, modelID) {
+		return fmt.Sprintf("Unknown model `%s`. Available: %s", modelID, joinModelIDs(available))
+	}
+
+	if modelID == current {
+		return fmt.Sprintf("Already using `%s`.", modelID)
+	}
+	if err := conn.SessionSetModel(modelID); err != nil {
+		return fmt.Sprintf("Failed to switch model: `%v`", err)
+	}
+	return fmt.Sprintf("✅ Switched to `%s`.", modelID)
+}
+
+func isKnownModel(available []acp.ModelInfo, id string) bool {
+	for _, m := range available {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func joinModelIDs(available []acp.ModelInfo) string {
+	ids := make([]string, 0, len(available))
+	for _, m := range available {
+		ids = append(ids, "`"+m.ID+"`")
+	}
+	return strings.Join(ids, ", ")
 }
 
 func formatDuration(d time.Duration) string {

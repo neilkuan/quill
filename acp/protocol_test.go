@@ -140,6 +140,145 @@ func TestClassifyNotification_Plan(t *testing.T) {
 	}
 }
 
+func TestClassifyNotification_CurrentModeUpdate_FlatID(t *testing.T) {
+	// sessionUpdate == current_mode_update, with the new id flat at
+	// the same level (form used by some agents).
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_mode_update","currentModeId":"code"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModeUpdate {
+		t.Fatalf("expected AcpEventModeUpdate, got %+v", evt)
+	}
+	if evt.ModeID != "code" {
+		t.Errorf("ModeID = %q, want 'code'", evt.ModeID)
+	}
+}
+
+func TestClassifyNotification_CurrentModeUpdate_NestedID(t *testing.T) {
+	// Some agents wrap the id in a currentMode object. The classifier
+	// accepts either.
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_mode_update","currentMode":{"id":"ask","name":"Ask"}}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModeUpdate {
+		t.Fatalf("expected AcpEventModeUpdate, got %+v", evt)
+	}
+	if evt.ModeID != "ask" {
+		t.Errorf("ModeID = %q, want 'ask'", evt.ModeID)
+	}
+}
+
+func TestClassifyNotification_CurrentModeUpdate_MissingID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_mode_update"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt != nil {
+		t.Fatalf("expected nil when id is absent, got %+v", evt)
+	}
+}
+
+func TestClassifyNotification_CurrentModelUpdate_FlatID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update","currentModelId":"haiku"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModelUpdate {
+		t.Fatalf("expected AcpEventModelUpdate, got %+v", evt)
+	}
+	if evt.ModelID != "haiku" {
+		t.Errorf("ModelID = %q, want 'haiku'", evt.ModelID)
+	}
+}
+
+func TestClassifyNotification_CurrentModelUpdate_NestedID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update","currentModel":{"id":"sonnet","name":"Sonnet"}}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModelUpdate {
+		t.Fatalf("expected AcpEventModelUpdate, got %+v", evt)
+	}
+	if evt.ModelID != "sonnet" {
+		t.Errorf("ModelID = %q, want 'sonnet'", evt.ModelID)
+	}
+}
+
+func TestClassifyNotification_CurrentModelUpdate_MissingID(t *testing.T) {
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt != nil {
+		t.Fatalf("expected nil when model id is absent, got %+v", evt)
+	}
+}
+
+func TestClassifyNotification_CurrentModelUpdate_FlatModelId(t *testing.T) {
+	// Kiro-shape flat `modelId` (not `currentModelId`).
+	raw := json.RawMessage(`{"update":{"sessionUpdate":"current_model_update","modelId":"claude-haiku-4.5"}}`)
+	msg := &JsonRpcMessage{Params: &raw}
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventModelUpdate {
+		t.Fatalf("expected AcpEventModelUpdate, got %+v", evt)
+	}
+	if evt.ModelID != "claude-haiku-4.5" {
+		t.Errorf("ModelID = %q, want 'claude-haiku-4.5'", evt.ModelID)
+	}
+}
+
+func TestModelInfo_UnmarshalAcceptsBothKeys(t *testing.T) {
+	// Kiro (and the current ACP spec) uses `modelId`.
+	var kiro ModelInfo
+	if err := json.Unmarshal([]byte(`{"modelId":"claude-sonnet-4.6","name":"Sonnet 4.6","description":"d"}`), &kiro); err != nil {
+		t.Fatalf("unmarshal Kiro shape: %v", err)
+	}
+	if kiro.ID != "claude-sonnet-4.6" || kiro.Name != "Sonnet 4.6" || kiro.Description != "d" {
+		t.Errorf("Kiro shape parsed wrong: %+v", kiro)
+	}
+
+	// Older shape using `id` must still work.
+	var legacy ModelInfo
+	if err := json.Unmarshal([]byte(`{"id":"haiku","name":"Haiku"}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy shape: %v", err)
+	}
+	if legacy.ID != "haiku" || legacy.Name != "Haiku" {
+		t.Errorf("legacy shape parsed wrong: %+v", legacy)
+	}
+
+	// When both are present, modelId wins — it's the canonical key.
+	var both ModelInfo
+	if err := json.Unmarshal([]byte(`{"modelId":"A","id":"B","name":"x"}`), &both); err != nil {
+		t.Fatalf("unmarshal both shapes: %v", err)
+	}
+	if both.ID != "A" {
+		t.Errorf("modelId should win over id: got %q", both.ID)
+	}
+}
+
+func TestModelSet_UnmarshalKiroShape(t *testing.T) {
+	// Verifies the availableModels array parses `modelId` end-to-end.
+	data := []byte(`{
+		"currentModelId": "claude-sonnet-4.6",
+		"availableModels": [
+			{"modelId": "auto", "name": "auto", "description": "pick best"},
+			{"modelId": "claude-sonnet-4.6", "name": "Claude Sonnet 4.6", "description": "latest"}
+		]
+	}`)
+	var ms ModelSet
+	if err := json.Unmarshal(data, &ms); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ms.CurrentModelID != "claude-sonnet-4.6" {
+		t.Errorf("CurrentModelID = %q", ms.CurrentModelID)
+	}
+	if len(ms.AvailableModels) != 2 {
+		t.Fatalf("len = %d, want 2", len(ms.AvailableModels))
+	}
+	if ms.AvailableModels[0].ID != "auto" {
+		t.Errorf("[0].ID = %q, want 'auto'", ms.AvailableModels[0].ID)
+	}
+	if ms.AvailableModels[1].ID != "claude-sonnet-4.6" {
+		t.Errorf("[1].ID = %q, want 'claude-sonnet-4.6'", ms.AvailableModels[1].ID)
+	}
+}
+
 func TestClassifyNotification_UnknownType(t *testing.T) {
 	msg := makeNotification(t, "some_unknown_event", "", "")
 	evt := ClassifyNotification(msg)

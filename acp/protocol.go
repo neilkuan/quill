@@ -106,6 +106,8 @@ const (
 	AcpEventToolStart
 	AcpEventToolDone
 	AcpEventStatus
+	AcpEventModeUpdate
+	AcpEventModelUpdate
 )
 
 type AcpEvent struct {
@@ -113,6 +115,66 @@ type AcpEvent struct {
 	Text   string
 	Title  string
 	Status string
+	// ModeID is the new current mode id carried by a
+	// current_mode_update session notification.
+	ModeID string
+	// ModelID is the new current model id carried by a
+	// current_model_update session notification.
+	ModelID string
+}
+
+// ModeInfo describes one entry of the `availableModes` array in an ACP
+// session setup response. `Description` is optional per spec.
+type ModeInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ModeSet mirrors the `modes` object returned by session/new and
+// session/load: which mode is active now, and what else is available.
+type ModeSet struct {
+	CurrentModeID  string     `json:"currentModeId"`
+	AvailableModes []ModeInfo `json:"availableModes"`
+}
+
+// ModelInfo describes one entry of the `availableModels` array in an
+// ACP session setup response. Shape parallels ModeInfo — but note the
+// asymmetric field naming: per ACP spec (and observed with Kiro), the
+// canonical key is `modelId`, not `id`. The custom UnmarshalJSON
+// accepts either so we stay robust across agents that follow older
+// drafts or that reuse the mode shape.
+type ModelInfo struct {
+	ID          string `json:"modelId"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+func (m *ModelInfo) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ModelID     string `json:"modelId,omitempty"`
+		ID          string `json:"id,omitempty"`
+		Name        string `json:"name,omitempty"`
+		Description string `json:"description,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.ModelID != "" {
+		m.ID = raw.ModelID
+	} else {
+		m.ID = raw.ID
+	}
+	m.Name = raw.Name
+	m.Description = raw.Description
+	return nil
+}
+
+// ModelSet mirrors the `models` object returned by session/new and
+// session/load: which model is active now, and what else is available.
+type ModelSet struct {
+	CurrentModelID  string      `json:"currentModelId"`
+	AvailableModels []ModelInfo `json:"availableModels"`
 }
 
 func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
@@ -173,6 +235,61 @@ func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
 
 	case "plan":
 		return &AcpEvent{Type: AcpEventStatus}
+
+	case "current_mode_update":
+		// Agent tells the client the session's active mode changed.
+		// The new id is wrapped in a nested object named either
+		// `currentMode` (per ACP spec) or flattened — accept both to
+		// stay robust across agents.
+		if raw, ok := update["currentModeId"]; ok {
+			var id string
+			if err := json.Unmarshal(raw, &id); err == nil && id != "" {
+				return &AcpEvent{Type: AcpEventModeUpdate, ModeID: id}
+			}
+		}
+		if raw, ok := update["currentMode"]; ok {
+			var inner struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &inner); err == nil && inner.ID != "" {
+				return &AcpEvent{Type: AcpEventModeUpdate, ModeID: inner.ID}
+			}
+		}
+		return nil
+
+	case "current_model_update":
+		// Mirror of current_mode_update for the model axis, but the
+		// model side has more shape variance in the wild: flat
+		// `currentModelId`, flat `modelId` (some Kiro builds), or
+		// nested `currentModel` object. Accept any form so the read
+		// loop stays in sync with the agent regardless.
+		if raw, ok := update["currentModelId"]; ok {
+			var id string
+			if err := json.Unmarshal(raw, &id); err == nil && id != "" {
+				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: id}
+			}
+		}
+		if raw, ok := update["modelId"]; ok {
+			var id string
+			if err := json.Unmarshal(raw, &id); err == nil && id != "" {
+				return &AcpEvent{Type: AcpEventModelUpdate, ModelID: id}
+			}
+		}
+		if raw, ok := update["currentModel"]; ok {
+			var inner struct {
+				ModelID string `json:"modelId"`
+				ID      string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &inner); err == nil {
+				if inner.ModelID != "" {
+					return &AcpEvent{Type: AcpEventModelUpdate, ModelID: inner.ModelID}
+				}
+				if inner.ID != "" {
+					return &AcpEvent{Type: AcpEventModelUpdate, ModelID: inner.ID}
+				}
+			}
+		}
+		return nil
 
 	default:
 		return nil

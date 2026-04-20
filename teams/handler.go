@@ -271,6 +271,13 @@ func (h *Handler) handleCommand(activity *Activity, cmd *command.Command) {
 		response = command.ExecuteStop(h.Pool, sessionKey)
 	case command.CmdPicker:
 		response = command.ExecutePicker(h.Pool, h.Picker, sessionKey, cmd.Args, h.Pool.WorkingDir())
+	case command.CmdMode:
+		// Teams is text-only: no native SelectMenu / InlineKeyboard
+		// hookup, so both `/mode` and `/mode <id>` fall back to the
+		// plain-text listing / switch path.
+		response = command.ExecuteMode(h.Pool, sessionKey, cmd.Args)
+	case command.CmdModel:
+		response = command.ExecuteModel(h.Pool, sessionKey, cmd.Args)
 	default:
 		return
 	}
@@ -466,6 +473,11 @@ func (h *Handler) streamPrompt(
 		} else if cancelled {
 			finalContent = strings.TrimRight(finalContent, " \t\n") + "\n\n🛑 _— 已取消_"
 		}
+		// Append a mode/model footer so users know which persona and
+		// backend produced the reply without having to run /info.
+		_, mode := conn.Modes()
+		_, model := conn.Models()
+		finalContent += platform.FormatSessionFooter(mode, model)
 		// Rewrite GFM tables before splitting
 		finalContent = markdown.ConvertTables(finalContent, h.MarkdownTableMode)
 

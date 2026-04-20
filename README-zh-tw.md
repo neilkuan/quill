@@ -243,7 +243,11 @@ api_key = "${OPENAI_API_KEY}"
 | `/reset` | 終止當前 session（下一則訊息會建立新的） |
 | `/resume` | 嘗試還原當前討論串的前一個 session |
 | `/stop` | 中斷 agent 當前的回覆（session 保留）。`cancel` 為同義指令。Discord 上點擊串流訊息的 🛑 reaction 效果相同。 |
-| `/pick` | 瀏覽並載入歷史 agent session。無參數時列出當前 cwd 範圍內最近的 session。`/pick <N>` 載入前一次列表的第 N 筆；`/pick load <id>` 依 session ID 直接載入；`/pick all` 跳過 cwd 過濾（適用於 Codex 等無 cwd 欄位的 agent）。`history`、`session-picker`、`session_picker`、`sessionpicker` 為相容舊寫法的同義指令。 |
+| `/pick` | 瀏覽並載入歷史 agent session。無參數或 `all` 時 Discord 會回 select menu、Telegram 會回 inline keyboard，點選即可 resume；`/pick <N>` 載入前一次列表的第 N 筆；`/pick load <id>` 依 session ID 直接載入（文字路徑仍保留給熟手）；`/pick all` 跳過 cwd 過濾（適用於 Codex 等無 cwd 欄位的 agent）。`history`、`session-picker`、`session_picker`、`sessionpicker` 為相容舊寫法的同義指令。 |
+| `/mode` | 列出或切換 session 的 agent mode（ACP `session/set_mode`）。無參數時 Discord 會回 select menu、Telegram 會回 inline keyboard，可點選切換；`/mode <id>` 或 `/mode <N>` 直接切。需要當前 thread 已有活著的 session（先傳訊息觸發），且 agent 在 session setup 時回報 `modes` 物件。 |
+| `/model` | 列出或切換 session 使用的 LLM model（ACP `session/set_model`）。互動 UX 與 `/mode` 相同，Discord／Telegram 互動、Teams 純文字。需要 agent 在 session setup 時回報 `models` 物件。 |
+
+每則 agent 回覆末尾會附上一行小字 footer，顯示當下 session 使用的 mode 與 model，例如 `— mode: `卡卡西` · model: `claude-sonnet-4.6``，讓使用者不必 `/info` 就知道這則回覆是哪個 persona、哪個後端模型產出的。agent 沒回報 modes／models 時 footer 會省略。
 
 ###### HTTP API（選用）
 

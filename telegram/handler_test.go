@@ -230,6 +230,38 @@ func TestExtractCommand(t *testing.T) {
 			},
 			want: "pick all",
 		},
+		{
+			// Fallback path: some clients occasionally deliver a /command
+			// without the bot_command entity. We still want the command
+			// to dispatch, otherwise /mode would silently become a
+			// prompt and the agent would treat it as natural language.
+			name: "no entity, command text fallback",
+			msg: &models.Message{
+				Text: "/mode",
+			},
+			want: "mode",
+		},
+		{
+			name: "no entity, command with args fallback",
+			msg: &models.Message{
+				Text: "/mode ask",
+			},
+			want: "mode ask",
+		},
+		{
+			name: "no entity, command with @botname fallback",
+			msg: &models.Message{
+				Text: "/mode@mybot ask",
+			},
+			want: "mode ask",
+		},
+		{
+			name: "no entity, just a slash",
+			msg: &models.Message{
+				Text: "/",
+			},
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {

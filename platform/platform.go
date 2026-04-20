@@ -162,6 +162,30 @@ func stripGenericStatusVerb(title string) (string, bool) {
 	return strings.TrimSpace(title[idx:]), true
 }
 
+// FormatSessionFooter returns a small footer showing the session's
+// current mode / model for appending to the agent's reply. Returns
+// empty string when both are blank, so callers can unconditionally
+// concatenate it.
+//
+// Deliberately avoids italic wrapping around inline code: Telegram's
+// markdown-to-HTML conversion closes italic spans when it hits a
+// backtick, so `_mode: \`x\` · model: \`y\`_` renders with broken
+// spacing. Plain text + inline code works cleanly on Discord,
+// Telegram-HTML and Teams alike.
+func FormatSessionFooter(mode, model string) string {
+	var parts []string
+	if mode != "" {
+		parts = append(parts, "mode: `"+mode+"`")
+	}
+	if model != "" {
+		parts = append(parts, "model: `"+model+"`")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\n— " + strings.Join(parts, " · ")
+}
+
 // TruncateUTF8 truncates text to at most limit bytes without cutting multi-byte characters.
 // If truncated, appends the suffix (e.g. "…").
 func TruncateUTF8(text string, limit int, suffix string) string {
