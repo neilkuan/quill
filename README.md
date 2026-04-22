@@ -287,6 +287,58 @@ When Codex sessions are displayed, the picker UI will surface a note about the m
 | **Bot library** | [discordgo](https://github.com/bwmarrin/discordgo) | [go-telegram/bot](https://github.com/go-telegram/bot) | Custom (Bot Framework REST API) |
 | **Update mechanism** | WebSocket gateway | Long polling | HTTP webhook (`POST /api/messages`) |
 
+##### Discord Setup Notes
+
+1. Create an application and bot at the [Discord Developer Portal](https://discord.com/developers/applications) and copy the **bot token**
+2. Enable the required **Privileged Gateway Intents** on the bot page (see table below)
+3. Invite the bot to your server using the OAuth2 URL Generator with the scopes and permissions listed below
+4. Get the channel/thread ID: enable Developer Mode (`User Settings → Advanced → Developer Mode`), right-click a channel → **Copy Channel ID**, then add it to `allowed_channels` in your config
+
+###### Required Gateway Intents
+
+Configured in `discord/adapter.go`:
+
+| Intent | Privileged? | Why |
+|---|---|---|
+| `GUILDS` | No | Guild/channel lifecycle events |
+| `GUILD_MESSAGES` | No | Receive messages in guild channels and threads |
+| `MESSAGE_CONTENT` | ✅ **Yes** | Read raw message content (required to parse prompts and @mentions) |
+| `GUILD_MESSAGE_REACTIONS` | No | Receive reaction-add events for the tap-to-cancel 🛑 flow |
+
+> ⚠️ `MESSAGE_CONTENT` is a **privileged intent** — you must toggle it on in the Developer Portal (**Bot → Privileged Gateway Intents → Message Content Intent**). Bots in 100+ servers also require Discord approval.
+>
+> Existing deployments upgrading across versions that added `GUILD_MESSAGE_REACTIONS` may need to **re-invite the bot** for the new intent to take effect.
+
+![](./docs/discord-bot-page.png)
+
+###### Required OAuth2 Scopes
+
+Select both scopes on the **OAuth2 → URL Generator** page:
+
+| Scope | Why |
+|---|---|
+| `bot` | Standard bot install scope |
+| `applications.commands` | Register Slash Commands (`/sessions`, `/info`, `/reset`, `/resume`, `/stop`, `/pick`, `/mode`, `/model`) via `ApplicationCommandCreate` |
+
+###### Required Bot Permissions
+
+Select these under **Bot Permissions** on the same page (permission integer: `397284474944`, adjust as needed):
+
+| Permission | Why |
+|---|---|
+| View Channels | Receive messages in allowed channels |
+| Send Messages | Post replies and the `💭 thinking...` placeholder |
+| Send Messages in Threads | Stream replies inside auto-created threads |
+| Create Public Threads | `MessageThreadStartComplex` — auto-creates a thread per prompt outside of existing threads |
+| Manage Threads | Rename / archive threads the bot created |
+| Embed Links | Render links and the session footer cleanly |
+| Attach Files | `ChannelFileSend` for TTS voice replies (`voice_reply.mp3`) |
+| Read Message History | Look up the originating message when editing streaming replies and resolving reactions |
+| Add Reactions | `MessageReactionAdd` — status emojis (queued/thinking/tool/done) and the 🛑 tap-to-cancel affordance |
+| Use Slash Commands | Invoke registered application commands in the server |
+
+![](./docs/discord-oauth2-page.png)
+
 ##### Telegram Setup Notes
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) and get the bot token

@@ -302,6 +302,58 @@ listen = ":8080"
 | **Bot 函式庫** | [discordgo](https://github.com/bwmarrin/discordgo) | [go-telegram/bot](https://github.com/go-telegram/bot) | 自製（Bot Framework REST API） |
 | **更新機制** | WebSocket gateway | Long polling | HTTP webhook（`POST /api/messages`） |
 
+##### Discord 設定注意事項
+
+1. 在 [Discord Developer Portal](https://discord.com/developers/applications) 建立 application 與 bot，複製 **bot token**
+2. 在 bot 頁面啟用下方必要的 **Privileged Gateway Intents**（見下表）
+3. 透過 OAuth2 URL Generator 產生邀請連結，勾選下方列出的 scopes 與 permissions，再把 bot 邀請進你的 server
+4. 取得 channel/thread ID：開啟開發者模式（`使用者設定 → 進階 → 開發者模式`），對 channel 右鍵 → **複製頻道 ID**，加到設定中的 `allowed_channels`
+
+###### 必要的 Gateway Intents
+
+設定於 `discord/adapter.go`：
+
+| Intent | 特權 intent？ | 用途 |
+|---|---|---|
+| `GUILDS` | 否 | Guild／channel 生命週期事件 |
+| `GUILD_MESSAGES` | 否 | 接收 guild channel 與 thread 中的訊息 |
+| `MESSAGE_CONTENT` | ✅ **是** | 讀取訊息內容（解析 prompt 與 @mention 必需） |
+| `GUILD_MESSAGE_REACTIONS` | 否 | 接收 reaction-add 事件（點擊 🛑 取消的流程） |
+
+> ⚠️ `MESSAGE_CONTENT` 是 **privileged intent** — 必須在 Developer Portal 中手動開啟（**Bot → Privileged Gateway Intents → Message Content Intent**）。Bot 加入 100+ servers 時還需要 Discord 審核通過。
+>
+> 已部署的環境如果從不含 `GUILD_MESSAGE_REACTIONS` 的版本升級，可能需要**重新邀請 bot**，新的 intent 才會生效。
+
+![](./docs/discord-bot-page.png)
+
+###### 必要的 OAuth2 Scopes
+
+在 **OAuth2 → URL Generator** 頁面同時勾選兩個 scope：
+
+| Scope | 用途 |
+|---|---|
+| `bot` | 標準 bot 安裝 scope |
+| `applications.commands` | 註冊 Slash Commands（`/sessions`、`/info`、`/reset`、`/resume`、`/stop`、`/pick`、`/mode`、`/model`），透過 `ApplicationCommandCreate` |
+
+###### 必要的 Bot Permissions
+
+在同一頁面的 **Bot Permissions** 區塊勾選以下權限（權限整數：`397284474944`，可視需求調整）：
+
+| 權限 | 用途 |
+|---|---|
+| View Channels | 在允許的 channel 中接收訊息 |
+| Send Messages | 發送回覆與 `💭 thinking...` 佔位訊息 |
+| Send Messages in Threads | 在自動建立的 thread 中串流回覆 |
+| Create Public Threads | `MessageThreadStartComplex` — 在非 thread 的 channel 中為每則 prompt 自動建立 thread |
+| Manage Threads | 重新命名／封存 bot 建立的 thread |
+| Embed Links | 正確渲染連結與 session footer |
+| Attach Files | `ChannelFileSend`，用於 TTS 語音回覆（`voice_reply.mp3`） |
+| Read Message History | 編輯串流回覆、解析 reaction 時查詢原訊息 |
+| Add Reactions | `MessageReactionAdd` — 狀態 emoji（queued／thinking／tool／done）與 🛑 點擊取消 |
+| Use Slash Commands | 在 server 中執行已註冊的 application commands |
+
+![](./docs/discord-oauth2-page.png)
+
 ##### Telegram 設定注意事項
 
 1. 透過 [@BotFather](https://t.me/BotFather) 建立 bot 並取得 bot token
