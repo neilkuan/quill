@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/neilkuan/quill/acp"
 )
 
 func TestUnmarshalInvokeData_HappyPath_Mode(t *testing.T) {
@@ -203,5 +205,52 @@ func TestOnInvokeAction_UnknownAction_NoOp(t *testing.T) {
 
 	if cap.method != "" {
 		t.Errorf("expected no Bot Framework call for unknown action, got %s %s", cap.method, cap.path)
+	}
+}
+
+func TestOnInvokeAction_SwitchMode_NoActiveSession_ShowsError(t *testing.T) {
+	cap := &captureUpdate{}
+	ts, client := newBotFrameworkStub(t, cap)
+
+	// Real pool with no connections — ExecuteMode returns the standard
+	// "no active agent session" message, which our handler surfaces.
+	pool := acp.NewSessionPool("/bin/false", nil, t.TempDir(), nil, 4)
+
+	h := &Handler{Client: client, Pool: pool}
+	a := makeInvokeActivity(ts.URL, "conv-X", "card-1",
+		"switch_mode", "teams:conv-X", "mode", "kiro_spec")
+
+	h.OnInvokeAction(a)
+
+	if cap.method != http.MethodPut {
+		t.Fatalf("expected UpdateActivity, got %s", cap.method)
+	}
+	contentJSON, _ := json.Marshal(cap.body.Attachments[0].Content)
+	if !bytes.Contains(contentJSON, []byte("❌")) {
+		t.Errorf("expected ❌ confirmation, got: %s", contentJSON)
+	}
+	if !bytes.Contains(contentJSON, []byte("active agent session")) {
+		t.Errorf("expected ExecuteMode error text passed through, got: %s", contentJSON)
+	}
+}
+
+func TestOnInvokeAction_SwitchModel_NoActiveSession_ShowsError(t *testing.T) {
+	cap := &captureUpdate{}
+	ts, client := newBotFrameworkStub(t, cap)
+
+	pool := acp.NewSessionPool("/bin/false", nil, t.TempDir(), nil, 4)
+
+	h := &Handler{Client: client, Pool: pool}
+	a := makeInvokeActivity(ts.URL, "conv-X", "card-1",
+		"switch_model", "teams:conv-X", "model", "claude-opus-4.6")
+
+	h.OnInvokeAction(a)
+
+	if cap.method != http.MethodPut {
+		t.Fatalf("expected UpdateActivity, got %s", cap.method)
+	}
+	contentJSON, _ := json.Marshal(cap.body.Attachments[0].Content)
+	if !bytes.Contains(contentJSON, []byte("❌")) {
+		t.Errorf("expected ❌ confirmation, got: %s", contentJSON)
 	}
 }

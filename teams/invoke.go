@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+
+	"github.com/neilkuan/quill/acp"
+	"github.com/neilkuan/quill/command"
 )
 
 // ErrNotInvoke means the activity does not carry a recognisable quill
@@ -78,14 +82,25 @@ func (h *Handler) OnInvokeAction(activity *Activity) {
 			h.updateCard(activity, BuildModeConfirmation("", "", "Selection missing — please re-open the picker with /mode."))
 			return
 		}
-		// Real switch is wired in Task 9; for now, no-op.
-		// (Tests for that path live in Task 9.)
+		prev := currentModeID(h.Pool, expectedThread)
+		result := command.ExecuteMode(h.Pool, expectedThread, data.Mode)
+		if isSwitchSuccess(result) {
+			h.updateCard(activity, BuildModeConfirmation(prev, data.Mode, ""))
+		} else {
+			h.updateCard(activity, BuildModeConfirmation(prev, data.Mode, result))
+		}
 	case actionSwitchModel:
 		if data.Model == "" {
 			h.updateCard(activity, BuildModelConfirmation("", "", "Selection missing — please re-open the picker with /model."))
 			return
 		}
-		// Wired in Task 9.
+		prev := currentModelID(h.Pool, expectedThread)
+		result := command.ExecuteModel(h.Pool, expectedThread, data.Model)
+		if isSwitchSuccess(result) {
+			h.updateCard(activity, BuildModelConfirmation(prev, data.Model, ""))
+		} else {
+			h.updateCard(activity, BuildModelConfirmation(prev, data.Model, result))
+		}
 	default:
 		slog.Debug("teams: unknown invoke action — ignoring", "action", data.Action)
 		return
@@ -110,4 +125,38 @@ func (h *Handler) updateCard(activity *Activity, card Attachment) {
 		Text:       fmt.Sprintf("⚠️ Card update failed: %v", err),
 		TextFormat: "markdown",
 	})
+}
+
+// isSwitchSuccess inspects the string returned by command.ExecuteMode /
+// ExecuteModel. Today both functions return a "✅ Switched ..." marker
+// on success and a free-form error string on failure.
+func isSwitchSuccess(s string) bool {
+	return strings.Contains(s, "✅")
+}
+
+// currentModeID returns the mode id active right now for the given
+// thread, or "" if the connection is gone. Used to show the "from →
+// to" arrow on the confirmation card.
+func currentModeID(pool *acp.SessionPool, threadKey string) string {
+	if pool == nil {
+		return ""
+	}
+	conn := pool.Connection(threadKey)
+	if conn == nil {
+		return ""
+	}
+	_, current := conn.Modes()
+	return current
+}
+
+func currentModelID(pool *acp.SessionPool, threadKey string) string {
+	if pool == nil {
+		return ""
+	}
+	conn := pool.Connection(threadKey)
+	if conn == nil {
+		return ""
+	}
+	_, current := conn.Models()
+	return current
 }
