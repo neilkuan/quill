@@ -86,3 +86,34 @@ func TestActivityMarshal(t *testing.T) {
 		t.Errorf("replyToId: got %v", decoded["replyToId"])
 	}
 }
+
+func TestActivity_DecodesValueField(t *testing.T) {
+	raw := []byte(`{
+		"type": "message",
+		"text": "",
+		"value": {"quill.action": "switch_mode", "thread": "teams:a:abc", "mode": "kiro_spec"},
+		"replyToId": "msg-1"
+	}`)
+
+	var a Activity
+	if err := json.Unmarshal(raw, &a); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if a.ReplyToID != "msg-1" {
+		t.Errorf("ReplyToID = %q, want %q", a.ReplyToID, "msg-1")
+	}
+	if len(a.Value) == 0 {
+		t.Fatalf("Value is empty — field did not decode")
+	}
+
+	var v map[string]string
+	if err := json.Unmarshal(a.Value, &v); err != nil {
+		t.Fatalf("Value re-decode: %v", err)
+	}
+	if v["quill.action"] != "switch_mode" {
+		t.Errorf(`Value["quill.action"] = %q, want "switch_mode"`, v["quill.action"])
+	}
+	if v["mode"] != "kiro_spec" {
+		t.Errorf(`Value["mode"] = %q, want "kiro_spec"`, v["mode"])
+	}
+}

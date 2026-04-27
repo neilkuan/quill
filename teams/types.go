@@ -1,19 +1,22 @@
 package teams
 
+import "encoding/json"
+
 type Activity struct {
-	Type         string       `json:"type"`
-	ID           string       `json:"id,omitempty"`
-	Timestamp    string       `json:"timestamp,omitempty"`
-	ServiceURL   string       `json:"serviceUrl,omitempty"`
-	ChannelID    string       `json:"channelId,omitempty"`
-	From         Account      `json:"from,omitempty"`
-	Conversation Conversation `json:"conversation,omitempty"`
-	Recipient    Account      `json:"recipient,omitempty"`
-	Text         string       `json:"text,omitempty"`
-	TextFormat   string       `json:"textFormat,omitempty"`
-	Attachments  []Attachment `json:"attachments,omitempty"`
-	Entities     []Entity     `json:"entities,omitempty"`
-	ReplyToID    string       `json:"replyToId,omitempty"`
+	Type         string          `json:"type"`
+	ID           string          `json:"id,omitempty"`
+	Timestamp    string          `json:"timestamp,omitempty"`
+	ServiceURL   string          `json:"serviceUrl,omitempty"`
+	ChannelID    string          `json:"channelId,omitempty"`
+	From         Account         `json:"from,omitempty"`
+	Conversation Conversation    `json:"conversation,omitempty"`
+	Recipient    Account         `json:"recipient,omitempty"`
+	Text         string          `json:"text,omitempty"`
+	TextFormat   string          `json:"textFormat,omitempty"`
+	Attachments  []Attachment    `json:"attachments,omitempty"`
+	Entities     []Entity        `json:"entities,omitempty"`
+	ReplyToID    string          `json:"replyToId,omitempty"`
+	Value        json.RawMessage `json:"value,omitempty"`
 }
 
 type Account struct {
