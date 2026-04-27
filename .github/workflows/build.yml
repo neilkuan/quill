@@ -208,3 +208,39 @@ jobs:
             -t "${IMAGE}:latest" \
             "${IMAGE}:${PROMOTE_FROM_VERSION}"
 
+  # --- Stable release: promote pre-release Helm chart (no rebuild) ---
+  promote-chart:
+    needs: resolve-tag
+    if: needs.resolve-tag.outputs.is_prerelease == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Promote pre-release chart to stable
+        run: |
+          VERSION="${{ needs.resolve-tag.outputs.version }}"
+          PROMOTE_FROM="${{ needs.resolve-tag.outputs.promote_from }}"
+          PROMOTE_FROM_VERSION="${PROMOTE_FROM#v}"
+          CHART_REPO="oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+
+          if [ -z "$PROMOTE_FROM_VERSION" ]; then
+            echo "::error::No pre-release chart to promote (promote_from is empty). Push an RC tag first."
+            exit 1
+          fi
+
+          echo "Promoting chart ${PROMOTE_FROM_VERSION} → ${VERSION}"
+          mkdir -p chart-src
+          helm pull "${CHART_REPO}/quill" --version "${PROMOTE_FROM_VERSION}" --untar --untardir chart-src
+
+          sed -i "s/^version:.*/version: ${VERSION}/" chart-src/quill/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" chart-src/quill/Chart.yaml
+
+          cat chart-src/quill/Chart.yaml
+          helm package chart-src/quill
+          ls -la quill-*.tgz
+          helm push "quill-${VERSION}.tgz" "${CHART_REPO}"
+
