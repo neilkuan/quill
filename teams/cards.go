@@ -1,5 +1,22 @@
 package teams
 
+import (
+	"fmt"
+
+	"github.com/neilkuan/quill/acp"
+	"github.com/neilkuan/quill/command"
+)
+
+const (
+	cardSchemaURL = "http://adaptivecards.io/schemas/adaptive-card.json"
+	cardVersion   = "1.5"
+
+	// Action keys put in SubmitAction.Data["quill.action"]. The handler's
+	// invoke router uses these to dispatch.
+	actionSwitchMode  = "switch_mode"
+	actionSwitchModel = "switch_model"
+)
+
 // AdaptiveCard is a minimal subset of the Adaptive Card 1.5 schema —
 // just enough for the picker / confirmation cards we send. Hand-written
 // JSON would be error-prone (typos in schema fields silently render as
@@ -70,4 +87,51 @@ func AdaptiveCardAttachment(card AdaptiveCard) Attachment {
 		ContentType: "application/vnd.microsoft.card.adaptive",
 		Content:     card,
 	}
+}
+
+// BuildModeCard wraps a non-empty ModeListing into an Adaptive Card
+// dropdown. Caller is responsible for checking listing.Err and Available
+// before calling — this builder assumes the data is renderable.
+func BuildModeCard(listing command.ModeListing, threadKey string) Attachment {
+	choices := make([]Choice, len(listing.Available))
+	for i, m := range listing.Available {
+		choices[i] = Choice{
+			Title: modeChoiceLabel(m),
+			Value: m.ID,
+		}
+	}
+	card := AdaptiveCard{
+		Type:    "AdaptiveCard",
+		Schema:  cardSchemaURL,
+		Version: cardVersion,
+		Body: []CardElement{
+			TextBlock{Type: "TextBlock", Text: "Switch agent mode", Weight: "Bolder", Size: "Medium"},
+			TextBlock{Type: "TextBlock", Text: fmt.Sprintf("Current: `%s`", listing.Current), IsSubtle: true, Wrap: true},
+			ChoiceSet{
+				Type:    "Input.ChoiceSet",
+				ID:      "mode",
+				Style:   "compact",
+				Value:   listing.Current,
+				Choices: choices,
+			},
+		},
+		Actions: []CardAction{
+			SubmitAction{
+				Type:  "Action.Submit",
+				Title: "Switch",
+				Data: map[string]any{
+					"quill.action": actionSwitchMode,
+					"thread":       threadKey,
+				},
+			},
+		},
+	}
+	return AdaptiveCardAttachment(card)
+}
+
+func modeChoiceLabel(m acp.ModeInfo) string {
+	if m.Description != "" {
+		return fmt.Sprintf("%s — %s", m.ID, m.Description)
+	}
+	return m.ID
 }

@@ -2,8 +2,12 @@ package teams
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/neilkuan/quill/acp"
+	"github.com/neilkuan/quill/command"
 )
 
 func TestAdaptiveCard_MarshalsExpectedShape(t *testing.T) {
@@ -48,5 +52,101 @@ func TestAdaptiveCardAttachment_HasRightContentType(t *testing.T) {
 	}
 	if att.Content == nil {
 		t.Fatal("Content is nil")
+	}
+}
+
+func TestBuildModeCard_HappyPath(t *testing.T) {
+	listing := command.ModeListing{
+		Current: "kiro_default",
+		Available: []acp.ModeInfo{
+			{ID: "kiro_default", Name: "kiro_default", Description: "General agent"},
+			{ID: "kiro_spec", Name: "kiro_spec", Description: "Spec planner"},
+			{ID: "kiro_guide", Name: "kiro_guide"},
+		},
+	}
+
+	att := BuildModeCard(listing, "teams:a:abc")
+	if att.ContentType != "application/vnd.microsoft.card.adaptive" {
+		t.Errorf("ContentType = %q", att.ContentType)
+	}
+	card, ok := att.Content.(AdaptiveCard)
+	if !ok {
+		t.Fatalf("Content is not AdaptiveCard, got %T", att.Content)
+	}
+
+	// First TextBlock = title; second = current marker.
+	if len(card.Body) < 3 {
+		t.Fatalf("expected ≥3 body elements (title, current, choiceset), got %d", len(card.Body))
+	}
+
+	var choiceSet ChoiceSet
+	for _, el := range card.Body {
+		if cs, ok := el.(ChoiceSet); ok {
+			choiceSet = cs
+		}
+	}
+	if choiceSet.ID != "mode" {
+		t.Errorf("ChoiceSet.ID = %q, want %q", choiceSet.ID, "mode")
+	}
+	if choiceSet.Style != "compact" {
+		t.Errorf("ChoiceSet.Style = %q, want %q", choiceSet.Style, "compact")
+	}
+	if choiceSet.Value != "kiro_default" {
+		t.Errorf("ChoiceSet.Value = %q (default), want %q", choiceSet.Value, "kiro_default")
+	}
+	if len(choiceSet.Choices) != 3 {
+		t.Errorf("Choices length = %d, want 3", len(choiceSet.Choices))
+	}
+	// Title format: "{id} — {description}" if description present, else just id.
+	wantTitles := []string{
+		"kiro_default — General agent",
+		"kiro_spec — Spec planner",
+		"kiro_guide",
+	}
+	for i, c := range choiceSet.Choices {
+		if c.Value != listing.Available[i].ID {
+			t.Errorf("Choice[%d].Value = %q, want %q", i, c.Value, listing.Available[i].ID)
+		}
+		if c.Title != wantTitles[i] {
+			t.Errorf("Choice[%d].Title = %q, want %q", i, c.Title, wantTitles[i])
+		}
+	}
+
+	// Single Submit action, with quill.action and thread baked into data.
+	if len(card.Actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(card.Actions))
+	}
+	submit, ok := card.Actions[0].(SubmitAction)
+	if !ok {
+		t.Fatalf("Actions[0] is not SubmitAction, got %T", card.Actions[0])
+	}
+	if submit.Title != "Switch" {
+		t.Errorf("submit.Title = %q, want %q", submit.Title, "Switch")
+	}
+	if submit.Data["quill.action"] != "switch_mode" {
+		t.Errorf(`Data["quill.action"] = %v, want "switch_mode"`, submit.Data["quill.action"])
+	}
+	if submit.Data["thread"] != "teams:a:abc" {
+		t.Errorf(`Data["thread"] = %v, want "teams:a:abc"`, submit.Data["thread"])
+	}
+}
+
+func TestBuildModeCard_TwelveOptions_StillCompact(t *testing.T) {
+	available := make([]acp.ModeInfo, 12)
+	for i := range available {
+		available[i] = acp.ModeInfo{ID: fmt.Sprintf("m%d", i)}
+	}
+	listing := command.ModeListing{Current: "m0", Available: available}
+
+	att := BuildModeCard(listing, "teams:a:abc")
+	card := att.Content.(AdaptiveCard)
+	var cs ChoiceSet
+	for _, el := range card.Body {
+		if c, ok := el.(ChoiceSet); ok {
+			cs = c
+		}
+	}
+	if len(cs.Choices) != 12 {
+		t.Errorf("Choices = %d, want 12", len(cs.Choices))
 	}
 }
