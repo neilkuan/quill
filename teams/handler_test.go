@@ -1,7 +1,13 @@
 package teams
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/neilkuan/quill/acp"
+	"github.com/neilkuan/quill/command"
 )
 
 func TestStripBotMention(t *testing.T) {
@@ -136,5 +142,85 @@ func TestExtensionForContentType(t *testing.T) {
 				t.Errorf("extensionForContentType(%q) = %q, want %q", tt.contentType, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSendModeCard_BuildsAdaptiveCardAttachment verifies sendModeCard sends
+// a POST with an Adaptive Card attachment.
+func TestSendModeCard_BuildsAdaptiveCardAttachment(t *testing.T) {
+	cap := &captureUpdate{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cap.method = r.Method
+		cap.path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&cap.body)
+		_, _ = w.Write([]byte(`{"id":"sent-1"}`))
+	}))
+	defer ts.Close()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "mock", "expires_in": 3600})
+	}))
+	defer tokenServer.Close()
+
+	auth := &BotAuth{appID: "a", appSecret: "s", tenantID: "t", tokenURL: tokenServer.URL}
+	client := NewBotClient(auth)
+
+	h := &Handler{Client: client}
+	listing := command.ModeListing{
+		Current:   "kiro_default",
+		Available: []acp.ModeInfo{{ID: "kiro_default"}, {ID: "kiro_spec"}},
+	}
+	a := &Activity{ServiceURL: ts.URL, Conversation: Conversation{ID: "conv-X"}}
+
+	h.sendModeCard(a, "teams:conv-X", listing)
+
+	if cap.method != http.MethodPost {
+		t.Fatalf("expected POST, got %s", cap.method)
+	}
+	if len(cap.body.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %d", len(cap.body.Attachments))
+	}
+	att := cap.body.Attachments[0]
+	if att.ContentType != "application/vnd.microsoft.card.adaptive" {
+		t.Errorf("ContentType = %q", att.ContentType)
+	}
+}
+
+// TestSendModelCard_BuildsAdaptiveCardAttachment verifies sendModelCard sends
+// a POST with an Adaptive Card attachment (symmetric to sendModeCard).
+func TestSendModelCard_BuildsAdaptiveCardAttachment(t *testing.T) {
+	cap := &captureUpdate{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cap.method = r.Method
+		cap.path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&cap.body)
+		_, _ = w.Write([]byte(`{"id":"sent-1"}`))
+	}))
+	defer ts.Close()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "mock", "expires_in": 3600})
+	}))
+	defer tokenServer.Close()
+
+	auth := &BotAuth{appID: "a", appSecret: "s", tenantID: "t", tokenURL: tokenServer.URL}
+	client := NewBotClient(auth)
+
+	h := &Handler{Client: client}
+	listing := command.ModelListing{
+		Current:   "claude-opus-4.6",
+		Available: []acp.ModelInfo{{ID: "claude-opus-4.6"}, {ID: "claude-sonnet-4.5"}},
+	}
+	a := &Activity{ServiceURL: ts.URL, Conversation: Conversation{ID: "conv-X"}}
+
+	h.sendModelCard(a, "teams:conv-X", listing)
+
+	if cap.method != http.MethodPost {
+		t.Fatalf("expected POST, got %s", cap.method)
+	}
+	if len(cap.body.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %d", len(cap.body.Attachments))
+	}
+	att := cap.body.Attachments[0]
+	if att.ContentType != "application/vnd.microsoft.card.adaptive" {
+		t.Errorf("ContentType = %q", att.ContentType)
 	}
 }
