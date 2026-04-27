@@ -32,6 +32,7 @@ type Attachment struct {
 	ContentType string `json:"contentType,omitempty"`
 	ContentURL  string `json:"contentUrl,omitempty"`
 	Name        string `json:"name,omitempty"`
+	Content     any    `json:"content,omitempty"`
 }
 
 type Entity struct {
