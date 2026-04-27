@@ -76,5 +76,37 @@ grep -q '\-s3-creds' "$TMP/pod-identity.yaml" \
     && fail "scenario 3: Pod Identity mode should not render s3-creds Secret"
 pass "scenario 3: Pod Identity mode renders sidecar + bare SA"
 
+# Scenario 4: Secret mode (inline) — sidecar + chart-managed Secret + valueFrom env, no SA
+render "secret-inline" "$TESTS_DIR/values-secret-inline.yaml"
+grep -q 'name: s3-sync' "$TMP/secret-inline.yaml" \
+    || fail "scenario 4: sidecar missing"
+grep -q 'r-quill-kiro-s3-creds' "$TMP/secret-inline.yaml" \
+    || fail "scenario 4: chart-managed Secret r-quill-kiro-s3-creds not rendered"
+grep -q 'AKIAEXAMPLEEXAMPLE12' "$TMP/secret-inline.yaml" \
+    && fail "scenario 4: access key should be base64-encoded, not plaintext"
+# AKIAEXAMPLEEXAMPLE12 base64-encoded
+grep -q 'AWS_ACCESS_KEY_ID:' "$TMP/secret-inline.yaml" \
+    || fail "scenario 4: Secret missing AWS_ACCESS_KEY_ID key"
+grep -q 'name: AWS_ACCESS_KEY_ID' "$TMP/secret-inline.yaml" \
+    || fail "scenario 4: sidecar env missing AWS_ACCESS_KEY_ID"
+grep -q 'name: r-quill-kiro-s3-creds' "$TMP/secret-inline.yaml" \
+    || fail "scenario 4: secretKeyRef points at wrong Secret name"
+# Static-credential mode does NOT need a ServiceAccount
+grep -q 'kind: ServiceAccount' "$TMP/secret-inline.yaml" \
+    && fail "scenario 4: secret-inline mode should not render ServiceAccount"
+grep -q 'serviceAccountName:' "$TMP/secret-inline.yaml" \
+    && fail "scenario 4: secret-inline mode should not set serviceAccountName"
+pass "scenario 4: secret-inline mode renders sidecar + chart-managed Secret"
+
+# Scenario 5: Secret mode (existing) — sidecar references existing Secret, no chart-managed Secret rendered
+render "secret-existing" "$TESTS_DIR/values-secret-existing.yaml"
+grep -q 'name: s3-sync' "$TMP/secret-existing.yaml" \
+    || fail "scenario 5: sidecar missing"
+grep -q 'r-quill-kiro-s3-creds' "$TMP/secret-existing.yaml" \
+    && fail "scenario 5: chart should not create its own Secret when existingSecret is set"
+grep -q 'name: my-precreated-aws-creds' "$TMP/secret-existing.yaml" \
+    || fail "scenario 5: secretKeyRef does not point at the existing Secret"
+pass "scenario 5: secret-existing mode references pre-existing Secret only"
+
 echo
 echo "All scenarios passed."
