@@ -188,3 +188,67 @@ func TestBuildModelCard_HappyPath(t *testing.T) {
 		t.Errorf(`Data["thread"] = %v, want "teams:a:abc"`, submit.Data["thread"])
 	}
 }
+
+func TestBuildModeConfirmation_Success(t *testing.T) {
+	att := BuildModeConfirmation("kiro_default", "kiro_spec", "")
+	card := att.Content.(AdaptiveCard)
+
+	if len(card.Actions) != 0 {
+		t.Errorf("expected no actions on confirmation card, got %d", len(card.Actions))
+	}
+	first := card.Body[0].(TextBlock)
+	if !strings.Contains(first.Text, "✅") {
+		t.Errorf("title missing ✅: %q", first.Text)
+	}
+	all := strings.Builder{}
+	for _, el := range card.Body {
+		if tb, ok := el.(TextBlock); ok {
+			all.WriteString(tb.Text)
+			all.WriteString("\n")
+		}
+	}
+	body := all.String()
+	if !strings.Contains(body, "kiro_default") {
+		t.Errorf("body missing previous mode: %s", body)
+	}
+	if !strings.Contains(body, "kiro_spec") {
+		t.Errorf("body missing new mode: %s", body)
+	}
+}
+
+func TestBuildModeConfirmation_Error(t *testing.T) {
+	att := BuildModeConfirmation("kiro_default", "kiro_spec", "agent rejected the switch")
+	card := att.Content.(AdaptiveCard)
+
+	first := card.Body[0].(TextBlock)
+	if !strings.Contains(first.Text, "❌") {
+		t.Errorf("title missing ❌: %q", first.Text)
+	}
+	bodyText := ""
+	for _, el := range card.Body {
+		if tb, ok := el.(TextBlock); ok {
+			bodyText += tb.Text + "\n"
+		}
+	}
+	if !strings.Contains(bodyText, "agent rejected the switch") {
+		t.Errorf("error message missing from card body: %s", bodyText)
+	}
+}
+
+func TestBuildModelConfirmation_Success(t *testing.T) {
+	att := BuildModelConfirmation("auto", "claude-opus-4.6", "")
+	card := att.Content.(AdaptiveCard)
+	first := card.Body[0].(TextBlock)
+	if !strings.Contains(first.Text, "✅") {
+		t.Errorf("title missing ✅: %q", first.Text)
+	}
+	bodyText := ""
+	for _, el := range card.Body {
+		if tb, ok := el.(TextBlock); ok {
+			bodyText += tb.Text + "\n"
+		}
+	}
+	if !strings.Contains(bodyText, "auto") || !strings.Contains(bodyText, "claude-opus-4.6") {
+		t.Errorf("body missing prev/new model: %s", bodyText)
+	}
+}

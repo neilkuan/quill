@@ -181,3 +181,37 @@ func modelChoiceLabel(m acp.ModelInfo) string {
 	}
 	return m.ID
 }
+
+// BuildModeConfirmation renders the post-submit confirmation card. When
+// errMsg is empty, the card shows ✅ Switched. When errMsg is non-empty,
+// it shows ❌ with the error string and no "from→to" arrow (the switch
+// did not happen).
+func BuildModeConfirmation(prev, next, errMsg string) Attachment {
+	return buildConfirmation("agent mode", prev, next, errMsg)
+}
+
+// BuildModelConfirmation is the /model analogue of BuildModeConfirmation.
+func BuildModelConfirmation(prev, next, errMsg string) Attachment {
+	return buildConfirmation("LLM model", prev, next, errMsg)
+}
+
+func buildConfirmation(label, prev, next, errMsg string) Attachment {
+	body := []CardElement{}
+	if errMsg == "" {
+		body = append(body,
+			TextBlock{Type: "TextBlock", Text: fmt.Sprintf("✅ Switched %s", label), Weight: "Bolder", Size: "Medium"},
+			TextBlock{Type: "TextBlock", Text: fmt.Sprintf("`%s` → `%s`", prev, next), IsSubtle: true, Wrap: true},
+		)
+	} else {
+		body = append(body,
+			TextBlock{Type: "TextBlock", Text: fmt.Sprintf("❌ Failed to switch %s", label), Weight: "Bolder", Size: "Medium", Color: "Attention"},
+			TextBlock{Type: "TextBlock", Text: errMsg, Wrap: true},
+		)
+	}
+	return AdaptiveCardAttachment(AdaptiveCard{
+		Type:    "AdaptiveCard",
+		Schema:  cardSchemaURL,
+		Version: cardVersion,
+		Body:    body,
+	})
+}
