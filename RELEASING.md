@@ -177,7 +177,6 @@ From the matching `release/vX.Y.Z` branch:
 git checkout release/vX.Y.Z
 ./scripts/release.sh --rc
 ```
-
 All 4 variants × 2 platforms should build and push. If the new variant still fails with `write_package denied`, the repo needs to be given **Actions write access** to the new package:
 
 - Open `https://github.com/users/neilkuan/packages/container/quill-<name>/settings`
