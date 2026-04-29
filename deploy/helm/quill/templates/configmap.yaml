@@ -54,5 +54,64 @@ data:
     enabled = true
     listen = {{ $.Values.api.listen | quote }}
     {{- end }}
+
+    {{- with $inst.stt }}
+    {{- if .enabled }}
+
+    [stt]
+    enabled = true
+    provider = {{ .provider | default "openai" | quote }}
+    api_key = {{ .apiKey | quote }}
+    {{- with .model }}
+    model = {{ . | quote }}
+    {{- end }}
+    {{- with .language }}
+    language = {{ . | quote }}
+    {{- end }}
+    {{- with .prompt }}
+    prompt = {{ . | quote }}
+    {{- end }}
+    {{- with .baseUrl }}
+    base_url = {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+
+    {{- with $inst.tts }}
+    {{- if .enabled }}
+
+    [tts]
+    enabled = true
+    provider = {{ .provider | default "openai" | quote }}
+    api_key = {{ .apiKey | quote }}
+    {{- with .model }}
+    model = {{ . | quote }}
+    {{- end }}
+    {{- with .voice }}
+    voice = {{ . | quote }}
+    {{- end }}
+    {{- with .instructions }}
+    instructions = {{ . | quote }}
+    {{- end }}
+    {{- with .style }}
+    style = {{ . | quote }}
+    {{- end }}
+    {{- with .stylePrefix }}
+    style_prefix = {{ . | quote }}
+    {{- end }}
+    {{- with .styleSuffix }}
+    style_suffix = {{ . | quote }}
+    {{- end }}
+    {{- with .voiceGender }}
+    voice_gender = {{ . | quote }}
+    {{- end }}
+    {{- with .baseUrl }}
+    base_url = {{ . | quote }}
+    {{- end }}
+    {{- if .timeoutSec }}
+    timeout_sec = {{ .timeoutSec }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
 {{- end }}
 {{- end }}

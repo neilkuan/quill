@@ -33,6 +33,33 @@ instances:
     telegram:
       enabled: false
       allowedChats: []
+    # -- Speech-to-Text (optional). Auto-enabled when apiKey is non-empty.
+    # apiKey accepts ${ENV} placeholders that resolve from the Secret above
+    # (e.g. ${OPENAI_API_KEY}). Set provider to choose the backend.
+    stt:
+      enabled: false
+      provider: openai           # currently only "openai" (Whisper)
+      apiKey: "${OPENAI_API_KEY}"
+      model: whisper-1
+      language: zh
+      prompt: "以下是繁體中文語音的逐字稿："
+      baseUrl: ""                # leave empty for OpenAI default
+    # -- Text-to-Speech (optional). Auto-enabled when apiKey is non-empty.
+    # provider: "openai" | "gemini" — Gemini-only fields (style/stylePrefix/
+    # stylePrefix) are silently ignored when provider=openai, and vice versa.
+    tts:
+      enabled: false
+      provider: openai           # "openai" or "gemini"
+      apiKey: "${OPENAI_API_KEY}"  # use ${GEMINI_API_KEY} when provider=gemini
+      model: ""                  # default depends on provider; leave empty to inherit
+      voice: ""                  # OpenAI: nova/ash/... | Gemini: Kore/Orus/...
+      instructions: ""           # voice style/tone instructions
+      style: ""                  # Gemini only: vocal_smile/newscaster/whisper/empathetic/promo_hype/deadpan
+      stylePrefix: ""            # Gemini only: e.g. "[shy]"
+      styleSuffix: ""             # Gemini only: e.g. "[laughs softly]"
+      voiceGender: ""            # OpenAI only: "male" or "female"
+      baseUrl: ""                # OpenAI only
+      timeoutSec: 60
     resources:
       requests:
         cpu: 250m
