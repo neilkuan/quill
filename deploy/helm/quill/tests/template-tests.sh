@@ -30,7 +30,9 @@ grep -q 'name: s3-backup' "$TMP/default.yaml" \
     && fail "scenario 1: s3-backup should NOT render when backup is disabled"
 grep -q 'fsGroup:' "$TMP/default.yaml" \
     && fail "scenario 1: pod-level fsGroup should not appear when backup is disabled"
-pass "scenario 1: default values produce no rclone containers and no fsGroup"
+yq 'select(.kind == "Deployment").spec.strategy.type' "$TMP/default.yaml" | grep -q '^RollingUpdate$' \
+    || fail "scenario 1: backup disabled should keep RollingUpdate strategy"
+pass "scenario 1: default values produce no rclone containers, no fsGroup, RollingUpdate strategy"
 
 # Scenario 2: IRSA — two-container layout, ownership, fsGroup, HOME=/tmp, IRSA SA
 render "irsa" "$TESTS_DIR/values-irsa.yaml"
@@ -85,6 +87,9 @@ done
 # Pod-level fsGroup
 yq 'select(.kind == "Deployment").spec.template.spec.securityContext.fsGroup' "$TMP/irsa.yaml" | grep -q '^1000$' \
     || fail "scenario 2: pod-level securityContext.fsGroup should be 1000"
+# Recreate strategy (avoids rolling-update race where new pod restores from S3 before old pod's preStop sync completes)
+yq 'select(.kind == "Deployment").spec.strategy.type' "$TMP/irsa.yaml" | grep -q '^Recreate$' \
+    || fail "scenario 2: deployment strategy must be Recreate when backup is enabled"
 # HOME=/tmp on both rclone containers
 for c in s3-restore s3-backup; do
     yq "select(.kind == \"Deployment\").spec.template.spec.initContainers[] | select(.name == \"$c\").env[] | select(.name == \"HOME\").value" "$TMP/irsa.yaml" | grep -q '^/tmp$' \

@@ -95,6 +95,13 @@ The chart can opt-in to an S3-backed backup that:
 - **`replicas: 1`** — the chart hard-codes this. The backup design assumes a
   single writer; running multiple replicas risks race conditions on
   `rclone sync`. Do not edit `templates/deployment.yaml` to scale up.
+- **`strategy: Recreate`** (auto-applied when backup enabled) — old pod
+  must terminate fully (running `preStop` rclone sync to upload current
+  state) before the new pod starts and runs its `s3-restore` initContainer.
+  `RollingUpdate` would create a race where the new pod restores from
+  S3 *before* the old pod's preStop has uploaded the latest state, and
+  the new pod ends up with stale (or empty) data. Brief downtime during
+  rollout (typically 10-30s for state sync) is the trade-off.
 - **Hard-crash trade-off** — OOMKill, node failure, or any abrupt termination
   bypasses `preStop`. State written since the last successful preStop is
   lost. Mitigate by sizing pod resources to avoid OOM and running on stable
