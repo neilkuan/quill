@@ -494,3 +494,105 @@ func TestConnectionModels_RoundTrip(t *testing.T) {
 		t.Errorf("Models() must return a defensive copy; got %q", avail2[0].ID)
 	}
 }
+
+// TestAcpConnection_ResolvePendingWithError_ForwardsToNotifyCh verifies
+// that when the agent process dies, every in-flight pending request gets
+// resolved AND the same error is forwarded to the notification subscriber.
+//
+// Without forwarding to notifyCh, streamPrompt (which reads from notifyCh,
+// not from the pending channel) hangs forever — the user sees the
+// thinking/restoring placeholder stuck on screen until idle cleanup,
+// which is exactly the silent-death symptom we observed with kiro-cli
+// crashing on base64 ImageBlock prompts.
+func TestAcpConnection_ResolvePendingWithError_ForwardsToNotifyCh(t *testing.T) {
+	w := &fakeWriteCloser{}
+	notifyCh := make(chan *JsonRpcMessage, 16)
+	conn := &AcpConnection{
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		stdin:     w,
+		SessionID: "sess_dead",
+		ThreadKey: "teams:test",
+		notifyCh:  notifyCh,
+	}
+	conn.alive.Store(true)
+
+	respCh := make(chan *JsonRpcMessage, 1)
+	const pendingID uint64 = 42
+	conn.pendingMu.Lock()
+	conn.pending[pendingID] = respCh
+	conn.pendingMu.Unlock()
+
+	conn.resolvePendingWithError("agent exited (code 1): segfault")
+
+	// notifyCh: streaming consumer wakes up here.
+	select {
+	case msg := <-notifyCh:
+		if msg.ID == nil || *msg.ID != pendingID {
+			t.Errorf("expected forwarded msg to carry id=%d, got %+v", pendingID, msg)
+		}
+		if msg.Error == nil || !strings.Contains(msg.Error.Message, "segfault") {
+			t.Errorf("expected error message with stderr tail, got %+v", msg.Error)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("resolvePendingWithError did not forward to notifyCh")
+	}
+
+	// pending channel: sendRequest path also wakes up.
+	select {
+	case msg := <-respCh:
+		if msg.Error == nil {
+			t.Errorf("expected error on pending channel, got %+v", msg)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("resolvePendingWithError did not resolve pending channel")
+	}
+
+	// pending map cleared.
+	conn.pendingMu.Lock()
+	leftover := len(conn.pending)
+	conn.pendingMu.Unlock()
+	if leftover != 0 {
+		t.Errorf("expected pending map cleared, still has %d entries", leftover)
+	}
+}
+
+// TestAcpConnection_ResolvePendingWithError_NoSubscriber covers the
+// no-streaming-consumer branch — sendRequest still gets its error even
+// when notifyCh is nil (e.g. agent dies before any prompt was issued, or
+// streamPrompt already called PromptDone). Must not panic / block.
+func TestAcpConnection_ResolvePendingWithError_NoSubscriber(t *testing.T) {
+	w := &fakeWriteCloser{}
+	conn := &AcpConnection{
+		pending:   make(map[uint64]chan *JsonRpcMessage),
+		stdin:     w,
+		SessionID: "sess_dead2",
+		notifyCh:  nil,
+	}
+	conn.alive.Store(true)
+
+	respCh := make(chan *JsonRpcMessage, 1)
+	conn.pendingMu.Lock()
+	conn.pending[1] = respCh
+	conn.pendingMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		conn.resolvePendingWithError("connection closed")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("resolvePendingWithError blocked when notifyCh was nil")
+	}
+
+	select {
+	case msg := <-respCh:
+		if msg.Error == nil || msg.Error.Message != "connection closed" {
+			t.Errorf("expected pending channel to receive 'connection closed' error, got %+v", msg)
+		}
+	default:
+		t.Fatal("pending channel did not receive error")
+	}
+}

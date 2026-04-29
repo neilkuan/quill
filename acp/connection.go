@@ -306,14 +306,56 @@ func (c *AcpConnection) readLoop(stdout io.Reader) {
 		slog.Error("agent process exited", "exit_code", exitCode, "stderr", stderr)
 	}
 
+	c.resolvePendingWithError(errMsg)
+}
+
+// resolvePendingWithError force-resolves every in-flight request with the
+// given error message AND forwards the same error to the notification
+// subscriber (if any) so streaming consumers (streamPrompt) wake up and
+// surface the failure to the user.
+//
+// Mirrors cancelWatchdog's dual-channel delivery, but for "agent died"
+// rather than "agent ignored cancel". Without forwarding to notifyCh,
+// streamPrompt — which reads from notifyCh, not from the pending
+// response channel — would block forever, leaving the user staring at a
+// thinking/restoring placeholder until idle cleanup (which itself does
+// not unblock the goroutine, only removes the connection from the pool).
+//
+// The notifyCh send is bounded by 2s so a stuck consumer doesn't keep
+// readLoop's goroutine alive past process exit.
+func (c *AcpConnection) resolvePendingWithError(errMsg string) {
 	c.pendingMu.Lock()
-	for id, ch := range c.pending {
-		ch <- &JsonRpcMessage{
+	pending := c.pending
+	c.pending = make(map[uint64]chan *JsonRpcMessage)
+	c.pendingMu.Unlock()
+
+	for id, ch := range pending {
+		idCopy := id
+		msg := &JsonRpcMessage{
+			ID:    &idCopy,
 			Error: &JsonRpcError{Code: -1, Message: errMsg},
 		}
-		delete(c.pending, id)
+
+		// Forward to the notification subscriber first — that's the
+		// channel streamPrompt reads. Without this, streamPrompt hangs.
+		c.notifyMu.Lock()
+		target := c.notifyCh
+		if target != nil {
+			select {
+			case target <- msg:
+			case <-time.After(2 * time.Second):
+				slog.Error("acp: connection died but could not forward error to notifyCh — stream may hang",
+					"session_id", c.SessionID, "thread_key", c.ThreadKey, "request_id", id)
+			}
+		}
+		c.notifyMu.Unlock()
+
+		// Pending channel is buffered size 1 — non-blocking send is safe.
+		select {
+		case ch <- msg:
+		default:
+		}
 	}
-	c.pendingMu.Unlock()
 }
 
 func (c *AcpConnection) sendRaw(data string) error {
