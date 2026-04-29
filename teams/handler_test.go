@@ -145,6 +145,68 @@ func TestExtensionForContentType(t *testing.T) {
 	}
 }
 
+// TestIsDownloadableAttachment verifies that we only attempt to download
+// attachments that actually carry a fetchable file. Teams routinely sends
+// non-file attachments alongside formatted text (e.g. a `text/html`
+// rendering for messages with @mentions, or Adaptive Cards in invokes);
+// these have no `contentUrl` and must not be passed through to the HTTP
+// downloader, which otherwise errors out with "unsupported protocol scheme".
+func TestIsDownloadableAttachment(t *testing.T) {
+	tests := []struct {
+		name string
+		att  Attachment
+		want bool
+	}{
+		{
+			name: "image with https url",
+			att:  Attachment{ContentType: "image/png", ContentURL: "https://example.com/a.png"},
+			want: true,
+		},
+		{
+			name: "audio with https url",
+			att:  Attachment{ContentType: "audio/ogg", ContentURL: "https://example.com/a.ogg"},
+			want: true,
+		},
+		{
+			name: "file with https url",
+			att:  Attachment{ContentType: "application/pdf", ContentURL: "https://example.com/a.pdf"},
+			want: true,
+		},
+		{
+			name: "empty contentUrl is skipped",
+			att:  Attachment{ContentType: "image/png", ContentURL: ""},
+			want: false,
+		},
+		{
+			name: "text/html mention rendering is skipped",
+			att:  Attachment{ContentType: "text/html", Content: "<div>...</div>"},
+			want: false,
+		},
+		{
+			name: "adaptive card is skipped",
+			att:  Attachment{ContentType: "application/vnd.microsoft.card.adaptive", Content: map[string]any{}},
+			want: false,
+		},
+		{
+			name: "thumbnail card is skipped",
+			att:  Attachment{ContentType: "application/vnd.microsoft.card.thumbnail", Content: map[string]any{}},
+			want: false,
+		},
+		{
+			name: "non-http scheme is skipped",
+			att:  Attachment{ContentType: "image/png", ContentURL: "file:///etc/passwd"},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDownloadableAttachment(tt.att); got != tt.want {
+				t.Errorf("isDownloadableAttachment(%+v) = %v, want %v", tt.att, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSendModeCard_BuildsAdaptiveCardAttachment verifies sendModeCard sends
 // a POST with an Adaptive Card attachment.
 func TestSendModeCard_BuildsAdaptiveCardAttachment(t *testing.T) {

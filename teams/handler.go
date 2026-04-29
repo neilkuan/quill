@@ -126,6 +126,14 @@ func (h *Handler) OnMessage(activity *Activity) {
 			slog.Error("failed to create temp directory", "path", tmpDir, "error", err)
 		} else {
 			for _, att := range activity.Attachments {
+				// Teams attaches non-file payloads (text/html mention rendering,
+				// Adaptive Cards) to ordinary messages — they carry no contentUrl
+				// and would otherwise blow up the HTTP downloader.
+				if !isDownloadableAttachment(att) {
+					slog.Debug("skipping non-downloadable attachment",
+						"content_type", att.ContentType, "name", att.Name)
+					continue
+				}
 				if isImageContentType(att.ContentType) {
 					localPath, err := h.downloadAttachment(att, tmpDir)
 					if err != nil {
@@ -817,6 +825,27 @@ func extensionForContentType(contentType string) string {
 		return exts[0]
 	}
 	return ""
+}
+
+// isDownloadableAttachment reports whether the attachment carries a real
+// file we can fetch over HTTP. Teams sends non-file attachments alongside
+// regular messages — most commonly a `text/html` rendering of formatted
+// text (e.g. when the user @mentions the bot) and Adaptive/Hero/Thumbnail
+// cards from invokes — that have no `contentUrl`. The HTTP downloader
+// would otherwise fail with `unsupported protocol scheme ""`, so we filter
+// them out at the call site instead.
+func isDownloadableAttachment(att Attachment) bool {
+	if strings.HasPrefix(att.ContentType, "application/vnd.microsoft.card.") {
+		return false
+	}
+	if att.ContentType == "text/html" {
+		return false
+	}
+	url := strings.TrimSpace(att.ContentURL)
+	if url == "" {
+		return false
+	}
+	return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
 }
 
 // downloadAttachment downloads an attachment from contentURL with a max size of 25MB
