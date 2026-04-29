@@ -98,6 +98,18 @@ backup:
     tag: "1.66"
     pullPolicy: IfNotPresent
     extraArgs: []          # passed to both copy (restore) and sync (backup)
+  ownership:
+    # UID/GID rclone containers run as. Files restored from S3 are owned by these
+    # IDs, so they must match the UID/GID inside the quill main container. All
+    # four built-in agent images (kiro, claude, codex, copilot) run as 1000:1000.
+    # Override only if you build a custom image with a different runtime user.
+    runAsUser: 1000
+    runAsGroup: 1000
+    # Pod-level fsGroup applied to the shared emptyDir. Kubelet recursively chowns
+    # volume contents to this GID at mount time and sets the SGID bit so files
+    # created later inherit the GID. Set the same as runAsGroup unless you have a
+    # specific reason to differ.
+    fsGroup: 1000
   resources:
     requests:
       cpu: 10m
