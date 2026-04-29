@@ -1,6 +1,7 @@
 package teams
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -186,9 +187,20 @@ func (h *Handler) OnMessage(activity *Activity) {
 		}
 	}
 
-	// Build content blocks
-	contentText := buildPromptContent(promptWithSender, imagePaths, []string{}, fileAttachments)
+	// Build content blocks. Images are embedded as base64 ImageBlocks so the
+	// agent sees them directly via its vision capability — Teams attachments
+	// often arrive without filenames (or with extensions kiro-cli's read tool
+	// can't infer), so passing a file path in text was unreliable.
+	contentText := buildPromptContent(promptWithSender, nil, []string{}, fileAttachments)
 	contentBlocks := []acp.ContentBlock{acp.TextBlock(contentText)}
+	for _, p := range imagePaths {
+		block, err := loadImageBlock(p)
+		if err != nil {
+			slog.Error("failed to load image as ACP block", "path", p, "error", err)
+			continue
+		}
+		contentBlocks = append(contentBlocks, block)
+	}
 
 	// Build session key
 	sessionKey := buildSessionKey(conversationID)
@@ -735,6 +747,26 @@ func buildPromptContent(base string, imagePaths, transcriptions []string, files 
 }
 
 // --- Attachment helpers ---
+
+// loadImageBlock reads an image from disk and wraps it as an ACP ImageBlock.
+// The MIME type is sniffed from the file's magic bytes via http.DetectContentType
+// because Teams attachment metadata is unreliable (Name/ContentType are sometimes
+// empty for inline images posted from mobile clients).
+func loadImageBlock(path string) (acp.ContentBlock, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	mimeType := http.DetectContentType(data)
+	if i := strings.Index(mimeType, ";"); i >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:i])
+	}
+	if !strings.HasPrefix(mimeType, "image/") {
+		return nil, fmt.Errorf("file %q is not an image (detected %s)", path, mimeType)
+	}
+	encoded := base64.StdEncoding.EncodeToString(data)
+	return acp.ImageBlock(encoded, mimeType), nil
+}
 
 func isImageContentType(contentType string) bool {
 	return strings.HasPrefix(contentType, "image/")
