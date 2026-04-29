@@ -54,7 +54,7 @@ spec:
             - -c
             - |
               set -eu
-              rclone copy "s3:${BUCKET}/${PREFIX}" /workdir --create-empty-src-dirs $EXTRA_ARGS
+              rclone copy "s3:${BUCKET}/${PREFIX}" /workdir --create-empty-src-dirs -v --stats-one-line --stats=5s $EXTRA_ARGS
           env:
             {{- include "quill.s3.envVars" (dict "ctx" $ "name" $name "b" $b) | nindent 12 }}
           volumeMounts:
@@ -82,7 +82,7 @@ spec:
                   - -c
                   - |
                     set -eu
-                    rclone sync /workdir "s3:${BUCKET}/${PREFIX}" --create-empty-src-dirs $EXTRA_ARGS
+                    rclone sync /workdir "s3:${BUCKET}/${PREFIX}" --create-empty-src-dirs -v --stats-one-line --stats=5s $EXTRA_ARGS
           env:
             {{- include "quill.s3.envVars" (dict "ctx" $ "name" $name "b" $b) | nindent 12 }}
           volumeMounts:
