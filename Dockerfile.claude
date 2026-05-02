@@ -28,7 +28,7 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm -rf /tmp/*
 
 # Layer 3: npm packages (all versions pinned to ensure cache correctness)
-RUN npm install -g @agentclientprotocol/claude-agent-acp@0.31.4 @anthropic-ai/claude-code@2.1.123 --retry 3 \
+RUN npm install -g @agentclientprotocol/claude-agent-acp@0.31.4 @anthropic-ai/claude-code@2.1.126 --retry 3 \
     && npm cache clean --force
 
 ENV HOME=/home/node
