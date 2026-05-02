@@ -2,22 +2,48 @@ name: Check Agent Updates
 
 on:
   schedule:
-    - cron: "0 */12 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
 
+env:
+  UPDATE_BRANCH: chore/agent-updates
+
 jobs:
   check-updates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
+
+      - name: Prepare update branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+
+          if git ls-remote --exit-code --heads origin "$UPDATE_BRANCH" >/dev/null 2>&1; then
+            echo "Existing branch '$UPDATE_BRANCH' found; rebasing onto origin/main"
+            git fetch origin "$UPDATE_BRANCH":"refs/remotes/origin/$UPDATE_BRANCH"
+            git checkout -B "$UPDATE_BRANCH" "refs/remotes/origin/$UPDATE_BRANCH"
+            git rebase origin/main
+            # Replay any prior bump diff into the working tree, then drop the
+            # commit so we end up with a single fresh bump commit on every run.
+            git reset --soft origin/main
+            git reset
+          else
+            echo "Branch '$UPDATE_BRANCH' does not exist; creating from origin/main"
+            git checkout -B "$UPDATE_BRANCH" origin/main
+          fi
 
       - name: Check for updates
         id: check
@@ -54,7 +80,7 @@ jobs:
             fi
             if [ "$current" != "$latest" ]; then
               echo "  gh CLI: ${current} → ${latest}"
-              for f in Dockerfile Dockerfile.codex Dockerfile.claude Dockerfile.copilot; do
+              for f in Dockerfile Dockerfile.codex Dockerfile.claude Dockerfile.copilot Dockerfile.gemini; do
                 sed -i "s|GH_CLI_VERSION=${current}|GH_CLI_VERSION=${latest}|g" "$f"
               done
               UPDATES="true"
@@ -90,6 +116,7 @@ jobs:
           check_npm "@agentclientprotocol/claude-agent-acp" "Dockerfile.claude"
           check_npm "@anthropic-ai/claude-code" "Dockerfile.claude"
           check_npm "@github/copilot" "Dockerfile.copilot"
+          check_npm "@google/gemini-cli" "Dockerfile.gemini"
 
           echo "Checking gh CLI..."
           check_gh_cli
@@ -97,35 +124,47 @@ jobs:
           echo "Checking kiro-cli..."
           check_kiro_cli
 
+          if [ -n "$(git status --porcelain Dockerfile Dockerfile.codex Dockerfile.claude Dockerfile.copilot Dockerfile.gemini)" ]; then
+            UPDATES="true"
+          fi
+
           echo "has_updates=${UPDATES:-false}" >> "$GITHUB_OUTPUT"
 
           if [ -n "$SUMMARY" ]; then
             printf '%b' "$SUMMARY" > /tmp/update-summary.txt
           fi
 
-      - name: Create Pull Request
+      - name: Commit and force-push
         if: steps.check.outputs.has_updates == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="chore/agent-updates-$(date +%Y%m%d-%H%M)"
-          SUMMARY=$(cat /tmp/update-summary.txt)
+          SUMMARY=$(cat /tmp/update-summary.txt 2>/dev/null || echo "- (see diff)")
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
-          git add Dockerfile Dockerfile.codex Dockerfile.claude Dockerfile.copilot
+          git add Dockerfile Dockerfile.codex Dockerfile.claude Dockerfile.copilot Dockerfile.gemini
+
+          if git diff --cached --quiet; then
+            echo "No staged changes after rebase; skipping commit and push"
+            exit 0
+          fi
+
           git commit -m "$(cat <<'COMMIT'
           chore(docker): bump agent binary versions
 
           Automated update detected by check-agent-updates workflow.
           COMMIT
           )"
-          git push -u origin "$BRANCH"
 
-          gh pr create \
-            --title "chore(docker): bump agent binary versions" \
-            --body "$(cat <<EOF
+          git push --force-with-lease -u origin "$UPDATE_BRANCH"
+
+          if gh pr view "$UPDATE_BRANCH" --json state --jq '.state' 2>/dev/null | grep -q OPEN; then
+            echo "PR for $UPDATE_BRANCH already open; updated via force-push"
+          else
+            gh pr create \
+              --head "$UPDATE_BRANCH" \
+              --base main \
+              --title "chore(docker): bump agent binary versions" \
+              --body "$(cat <<EOF
           ##### Summary
           Automated version bump detected by \`check-agent-updates\` workflow.
 
@@ -136,3 +175,4 @@ jobs:
           - [ ] Confirm Docker images contain expected agent versions
           EOF
           )"
+          fi

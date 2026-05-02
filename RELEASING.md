@@ -79,13 +79,14 @@ Version bump is auto-detected from conventional commits:
 
 ## Image Tags
 
-Each build produces four multi-arch image variants:
+Each build produces five multi-arch image variants:
 
 ```
 ghcr.io/neilkuan/quill:<tag>          # kiro-cli
 ghcr.io/neilkuan/quill-codex:<tag>    # codex
 ghcr.io/neilkuan/quill-claude:<tag>   # claude
 ghcr.io/neilkuan/quill-copilot:<tag>  # GitHub Copilot CLI
+ghcr.io/neilkuan/quill-gemini:<tag>   # Gemini CLI
 ```
 
 Tag patterns:

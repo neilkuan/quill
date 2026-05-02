@@ -6,7 +6,7 @@
 
 繁體中文 | [English](README.md)
 
-一個輕量、安全、雲原生的 **ACP（Agent Client Protocol）橋接器**，連接 **Discord**、**Telegram** 和 **Microsoft Teams** 與任何 ACP 相容的 coding CLI — [Kiro CLI](https://kiro.dev)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex](https://github.com/openai/codex)、[GitHub Copilot CLI](https://github.com/github/copilot-cli) 等。
+一個輕量、安全、雲原生的 **ACP（Agent Client Protocol）橋接器**，連接 **Discord**、**Telegram** 和 **Microsoft Teams** 與任何 ACP 相容的 coding CLI — [Kiro CLI](https://kiro.dev)、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex](https://github.com/openai/codex)、[GitHub Copilot CLI](https://github.com/github/copilot-cli)、[Gemini CLI](https://github.com/google-gemini/gemini-cli) 等。
 
 這是 [openab](https://github.com/openabdev/openab)（原本以 Rust 撰寫）的 **Go 重寫版本**。
 
@@ -14,7 +14,7 @@
 
 ##### 功能特色
 
-- **可插拔的 Agent 後端** — Kiro、Claude Code、Codex、GitHub Copilot（任何 ACP 相容 CLI）
+- **可插拔的 Agent 後端** — Kiro、Claude Code、Codex、GitHub Copilot、Gemini CLI（任何 ACP 相容 CLI）
 - **Discord 整合** — @mention 觸發、自動建立討論串、多輪對話
 - **Telegram 整合** — 群組中 @mention / 回覆 bot、私聊、語音訊息自動接受、forum topic 支援（每個 topic 一個 session）
 - **Microsoft Teams 整合** — 頻道中 @mention 觸發、Bot Framework webhook、串流編輯回覆、圖片/語音/檔案附件
@@ -31,7 +31,7 @@
 
 ##### 可插拔的 Agent 後端
 
-支援 Kiro CLI、Claude Code、Codex、GitHub Copilot CLI，以及任何 ACP 相容的 CLI。
+支援 Kiro CLI、Claude Code、Codex、GitHub Copilot CLI、Gemini CLI，以及任何 ACP 相容的 CLI。
 
 | Agent key | CLI | ACP Adapter | 認證方式 |
 |---|---|---|---|
@@ -39,8 +39,11 @@
 | `codex` | Codex | [@zed-industries/codex-acp](https://github.com/zed-industries/codex-acp) | `codex login --device-auth` |
 | `claude` | Claude Code | [@agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | `claude auth login` 或 `claude setup-token` |
 | `copilot` ⚠️ | GitHub Copilot CLI | 原生 `copilot --acp --stdio` | `gh auth login -p https -w` |
+| `gemini` ⚠️ | Gemini CLI | 原生 `gemini --experimental-acp` | `gemini` 首次執行 / `GEMINI_API_KEY` |
 
 > ⚠️ **copilot**：需付費 GitHub Copilot 訂閱。ACP 支援目前為 public preview — 行為可能會變動。
+>
+> ⚠️ **gemini**：ACP 支援透過 `--experimental-acp` flag 暴露，行為可能變動。`/pick`（session picker）尚未支援 Gemini，其他指令照常運作。
 
 ---
 
@@ -281,6 +284,7 @@ listen = ":8080"
 | Claude Code | `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` | ✅ |
 | GitHub Copilot CLI | `~/.copilot/session-state/<uuid>/`（`workspace.yaml` + `events.jsonl`） | ✅（best-effort 從 `workspace.yaml` 讀） |
 | Codex | `~/.codex/history.jsonl`（扁平索引） | ❌ — Codex history 的每一筆沒有 cwd 欄位。傳入非空 cwd 時 `List` 回空 slice，不會回傳未過濾的結果 |
+| Gemini CLI | `~/.gemini/tmp/<sha256(cwd)>/chats/` | ❌ — picker 尚未實作（chats/ 內部 JSON schema 尚未官方文件化） |
 
 顯示 Codex session 時，picker UI 會提示「該 agent 不支援 cwd 過濾」，讓使用者知道需要改用空 cwd 才能看到結果。
 
@@ -374,7 +378,7 @@ listen = ":8080"
 
 ##### Docker
 
-每次 release 會發布四種 image 變體：
+每次 release 會發布五種 image 變體：
 
 | Image | Agent |
 |---|---|
@@ -382,6 +386,7 @@ listen = ":8080"
 | `ghcr.io/neilkuan/quill-claude` | Claude Code |
 | `ghcr.io/neilkuan/quill-codex` | Codex |
 | `ghcr.io/neilkuan/quill-copilot` | GitHub Copilot CLI |
+| `ghcr.io/neilkuan/quill-gemini` | Gemini CLI |
 
 ```bash
 docker run -v $(pwd)/config.toml:/etc/quill/config.toml \
@@ -475,6 +480,7 @@ quill/
 ├── Dockerfile.claude    # Claude Code 變體
 ├── Dockerfile.codex     # Codex 變體
 ├── Dockerfile.copilot   # GitHub Copilot CLI 變體
+├── Dockerfile.gemini    # Gemini CLI 變體
 ├── config.toml.example  # 設定參考
 ├── VERSION              # Semver 版本
 └── RELEASING.md         # Release 流程文件

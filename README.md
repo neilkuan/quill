@@ -6,7 +6,7 @@
 
 [繁體中文](README-zh-tw.md) | English
 
-A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord**, **Telegram**, and **Microsoft Teams** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot CLI](https://github.com/github/copilot-cli), and more.
+A lightweight, secure, cloud-native **ACP (Agent Client Protocol) bridge** that connects **Discord**, **Telegram**, and **Microsoft Teams** with any ACP-compatible coding CLI — [Kiro CLI](https://kiro.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot CLI](https://github.com/github/copilot-cli), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and more.
 
 This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (originally in Rust).
 
@@ -39,8 +39,11 @@ Supports Kiro CLI, Claude Code, Codex, GitHub Copilot CLI, and any ACP-compatibl
 | `codex` | Codex | [@zed-industries/codex-acp](https://github.com/zed-industries/codex-acp) | `codex login --device-auth` |
 | `claude` | Claude Code | [@agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | `claude auth login` or `claude setup-token` |
 | `copilot` ⚠️ | GitHub Copilot CLI | Native `copilot --acp --stdio` | `gh auth login -p https -w` |
+| `gemini` ⚠️ | Gemini CLI | Native `gemini --experimental-acp` | `gemini` first run / `GEMINI_API_KEY` |
 
 > ⚠️ **copilot**: Requires a paid GitHub Copilot subscription. ACP support is currently in public preview — behavior may change.
+>
+> ⚠️ **gemini**: ACP support is exposed via the `--experimental-acp` flag and may evolve. `/pick` (session picker) is not yet implemented for Gemini — other commands work as usual.
 
 ---
 
@@ -266,6 +269,7 @@ The `/pick` command lets users browse and resume an agent's historical sessions 
 | Claude Code | `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` | ✅ |
 | GitHub Copilot CLI | `~/.copilot/session-state/<uuid>/` (`workspace.yaml` + `events.jsonl`) | ✅ (best-effort from `workspace.yaml`) |
 | Codex | `~/.codex/history.jsonl` (flat index) | ❌ — Codex's history entries carry no cwd. `List` returns an empty slice when a non-empty cwd is passed, rather than silently returning unfiltered results |
+| Gemini CLI | `~/.gemini/tmp/<sha256(cwd)>/chats/` | ❌ — picker not implemented yet (chat JSON schema undocumented) |
 
 When Codex sessions are displayed, the picker UI will surface a note about the missing cwd filter so users know to drop the cwd argument to see any results.
 
@@ -359,7 +363,7 @@ Select these under **Bot Permissions** on the same page (permission integer: `39
 
 ##### Docker
 
-Four image variants are published for each release:
+Five image variants are published for each release:
 
 | Image | Agent |
 |---|---|
@@ -367,6 +371,7 @@ Four image variants are published for each release:
 | `ghcr.io/neilkuan/quill-claude` | Claude Code |
 | `ghcr.io/neilkuan/quill-codex` | Codex |
 | `ghcr.io/neilkuan/quill-copilot` | GitHub Copilot CLI |
+| `ghcr.io/neilkuan/quill-gemini` | Gemini CLI |
 
 ```bash
 docker run -v $(pwd)/config.toml:/etc/quill/config.toml \
@@ -460,6 +465,7 @@ quill/
 ├── Dockerfile.claude    # Claude Code variant
 ├── Dockerfile.codex     # Codex variant
 ├── Dockerfile.copilot   # GitHub Copilot CLI variant
+├── Dockerfile.gemini    # Gemini CLI variant
 ├── config.toml.example  # Configuration reference
 ├── VERSION              # Semver version
 └── RELEASING.md         # Release workflow documentation
