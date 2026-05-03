@@ -108,6 +108,7 @@ const (
 	AcpEventStatus
 	AcpEventModeUpdate
 	AcpEventModelUpdate
+	AcpEventImage
 )
 
 type AcpEvent struct {
@@ -121,6 +122,13 @@ type AcpEvent struct {
 	// ModelID is the new current model id carried by a
 	// current_model_update session notification.
 	ModelID string
+	// ImageBase64 / ImageMimeType carry an inline image emitted by the
+	// agent inside an agent_message_chunk with content.type == "image".
+	// Only populated when Type == AcpEventImage; bytes are kept
+	// base64-encoded so platform code can decide whether to decode in
+	// memory or stream straight to disk.
+	ImageBase64   string
+	ImageMimeType string
 }
 
 // ModeInfo describes one entry of the `availableModes` array in an ACP
@@ -210,13 +218,34 @@ func ClassifyNotification(msg *JsonRpcMessage) *AcpEvent {
 		if !ok {
 			return nil
 		}
-		var content struct {
-			Text string `json:"text"`
+		// Dispatch on the content block's `type` field. ACP defines text /
+		// image / audio / resource_link / resource; we surface text and
+		// image today and silently ignore the others rather than treat
+		// them as text.
+		var head struct {
+			Type string `json:"type"`
 		}
-		if err := json.Unmarshal(contentRaw, &content); err != nil {
+		if err := json.Unmarshal(contentRaw, &head); err != nil {
 			return nil
 		}
-		return &AcpEvent{Type: AcpEventText, Text: content.Text}
+		switch head.Type {
+		case "", "text":
+			var content struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(contentRaw, &content); err != nil {
+				return nil
+			}
+			return &AcpEvent{Type: AcpEventText, Text: content.Text}
+		case "image":
+			data, mime := parseImageContent(contentRaw)
+			if data == "" {
+				return nil
+			}
+			return &AcpEvent{Type: AcpEventImage, ImageBase64: data, ImageMimeType: mime}
+		default:
+			return nil
+		}
 
 	case "agent_thought_chunk":
 		return &AcpEvent{Type: AcpEventThinking}
@@ -311,6 +340,34 @@ func StopReason(msg *JsonRpcMessage) string {
 		return ""
 	}
 	return r.StopReason
+}
+
+// parseImageContent extracts the base64 payload + mime type from an
+// `agent_message_chunk` image content block. Accepts both shapes seen
+// in the wild:
+//
+//   - Flat (per ACP spec):  {"type":"image","data":"<base64>","mimeType":"image/png"}
+//   - Nested (Anthropic-style): {"type":"image","source":{"type":"base64","media_type":"image/png","data":"<base64>"}}
+//
+// Returns ("", "") when neither shape carries a usable payload.
+func parseImageContent(raw json.RawMessage) (data, mime string) {
+	var flat struct {
+		Data     string `json:"data"`
+		MimeType string `json:"mimeType"`
+	}
+	if err := json.Unmarshal(raw, &flat); err == nil && flat.Data != "" {
+		return flat.Data, flat.MimeType
+	}
+	var nested struct {
+		Source struct {
+			Data      string `json:"data"`
+			MediaType string `json:"media_type"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(raw, &nested); err == nil && nested.Source.Data != "" {
+		return nested.Source.Data, nested.Source.MediaType
+	}
+	return "", ""
 }
 
 func extractStringField(m map[string]json.RawMessage, key string) string {

@@ -56,6 +56,71 @@ func TestClassifyNotification_AgentMessageChunk(t *testing.T) {
 	}
 }
 
+func TestClassifyNotification_AgentMessageChunk_TypedText(t *testing.T) {
+	// Spec-compliant text chunks include "type":"text". Must classify
+	// the same way as the legacy untyped form above.
+	msg := makeNotification(t, "agent_message_chunk", `{"type":"text","text":"hi"}`, "content")
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventText || evt.Text != "hi" {
+		t.Fatalf("expected text event with 'hi', got %+v", evt)
+	}
+}
+
+func TestClassifyNotification_AgentMessageChunk_ImageFlat(t *testing.T) {
+	msg := makeNotification(t, "agent_message_chunk",
+		`{"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}`, "content")
+	evt := ClassifyNotification(msg)
+	if evt == nil {
+		t.Fatal("expected non-nil event")
+	}
+	if evt.Type != AcpEventImage {
+		t.Fatalf("expected AcpEventImage, got %d", evt.Type)
+	}
+	if evt.ImageBase64 != "iVBORw0KGgo=" {
+		t.Errorf("ImageBase64 = %q", evt.ImageBase64)
+	}
+	if evt.ImageMimeType != "image/png" {
+		t.Errorf("ImageMimeType = %q", evt.ImageMimeType)
+	}
+}
+
+func TestClassifyNotification_AgentMessageChunk_ImageNested(t *testing.T) {
+	// Anthropic-style nested source — must still classify as image.
+	msg := makeNotification(t, "agent_message_chunk",
+		`{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/AA=="}}`,
+		"content")
+	evt := ClassifyNotification(msg)
+	if evt == nil || evt.Type != AcpEventImage {
+		t.Fatalf("expected image event, got %+v", evt)
+	}
+	if evt.ImageBase64 != "/9j/AA==" {
+		t.Errorf("ImageBase64 = %q", evt.ImageBase64)
+	}
+	if evt.ImageMimeType != "image/jpeg" {
+		t.Errorf("ImageMimeType = %q", evt.ImageMimeType)
+	}
+}
+
+func TestClassifyNotification_AgentMessageChunk_ImageEmptyDataIgnored(t *testing.T) {
+	// Image block with no data is unusable — return nil so the read
+	// loop doesn't try to send a zero-byte attachment.
+	msg := makeNotification(t, "agent_message_chunk",
+		`{"type":"image","data":"","mimeType":"image/png"}`, "content")
+	if evt := ClassifyNotification(msg); evt != nil {
+		t.Fatalf("expected nil event for empty image data, got %+v", evt)
+	}
+}
+
+func TestClassifyNotification_AgentMessageChunk_UnknownType(t *testing.T) {
+	// audio / resource_link etc are not surfaced today — skip silently
+	// rather than misclassify as text.
+	msg := makeNotification(t, "agent_message_chunk",
+		`{"type":"audio","data":"AAAA","mimeType":"audio/wav"}`, "content")
+	if evt := ClassifyNotification(msg); evt != nil {
+		t.Fatalf("expected nil event for audio, got %+v", evt)
+	}
+}
+
 func TestClassifyNotification_AgentThoughtChunk(t *testing.T) {
 	msg := makeNotification(t, "agent_thought_chunk", "", "")
 	evt := ClassifyNotification(msg)

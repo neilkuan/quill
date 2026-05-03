@@ -1,7 +1,9 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -846,6 +848,22 @@ func (h *Handler) streamPrompt(
 					currentDisplay = display
 					displayMu.Unlock()
 
+				case acp.AcpEventImage:
+					// Send the agent's image as a separate Telegram
+					// message — splicing a binary attachment into the
+					// streaming text edit isn't possible, and a
+					// dedicated SendPhoto preserves preview rendering.
+					// Failures only log; the streamed text reply still
+					// goes through.
+					sentMsgID, err := h.sendImageReply(ctx, b, chatID, threadID, msgID,
+						event.ImageBase64, event.ImageMimeType)
+					marker := formatImageMarker(event.ImageMimeType, sentMsgID, err)
+					textBuf.WriteString(marker)
+					display := composeDisplay(toolLines, textBuf.String())
+					displayMu.Lock()
+					currentDisplay = display
+					displayMu.Unlock()
+
 				case acp.AcpEventThinking:
 					reactions.SetThinking()
 
@@ -1055,6 +1073,126 @@ func (h *Handler) sendVoiceReply(ctx context.Context, b *bot.Bot, chatID int64, 
 	if err != nil {
 		slog.Error("failed to send tts voice", "error", err)
 	}
+}
+
+// sendImageReply decodes a base64 image emitted by the agent and sends
+// it as a SendPhoto message back to the originating chat / forum topic,
+// replying to the bot's streaming reply so the conversation thread stays
+// intact. Returns the new message id (0 on failure) so the streamed
+// text can mention which message carries the picture.
+//
+// Telegram's SendPhoto caps photos at 10 MiB; oversized payloads fall
+// back to SendDocument so users still receive the file. Unknown mime
+// types are surfaced via the filename extension only — the API infers
+// the content type from the bytes themselves.
+func (h *Handler) sendImageReply(
+	ctx context.Context,
+	b *bot.Bot,
+	chatID int64,
+	threadID int,
+	replyToMsgID int,
+	dataB64, mimeType string,
+) (int, error) {
+	raw, err := base64.StdEncoding.DecodeString(dataB64)
+	if err != nil {
+		// Some agents add a `data:image/png;base64,` prefix when they
+		// emit images — strip it and retry once before giving up.
+		if i := strings.Index(dataB64, ";base64,"); i >= 0 {
+			raw, err = base64.StdEncoding.DecodeString(dataB64[i+len(";base64,"):])
+		}
+		if err != nil {
+			slog.Warn("telegram: agent image base64 decode failed", "error", err, "mime", mimeType)
+			return 0, fmt.Errorf("decode base64: %w", err)
+		}
+	}
+
+	filename := imageFilenameFromMime(mimeType)
+	const photoLimit = 10 * 1024 * 1024 // SendPhoto cap
+	upload := &models.InputFileUpload{
+		Filename: filename,
+		Data:     bytes.NewReader(raw),
+	}
+	reply := &models.ReplyParameters{MessageID: replyToMsgID}
+
+	if len(raw) <= photoLimit {
+		sent, err := b.SendPhoto(ctx, &bot.SendPhotoParams{
+			ChatID:          chatID,
+			MessageThreadID: threadID,
+			Photo:           upload,
+			ReplyParameters: reply,
+		})
+		if err == nil {
+			slog.Info("telegram: sent agent image", "bytes", len(raw), "mime", mimeType, "msg_id", sent.ID)
+			return sent.ID, nil
+		}
+		slog.Warn("telegram: SendPhoto failed, falling back to SendDocument",
+			"error", err, "bytes", len(raw), "mime", mimeType)
+	}
+
+	// Fall back to SendDocument for oversized photos or when SendPhoto
+	// rejects the payload (e.g. dimensions out of range).
+	docUpload := &models.InputFileUpload{
+		Filename: filename,
+		Data:     bytes.NewReader(raw),
+	}
+	sent, err := b.SendDocument(ctx, &bot.SendDocumentParams{
+		ChatID:          chatID,
+		MessageThreadID: threadID,
+		Document:        docUpload,
+		ReplyParameters: reply,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("SendDocument: %w", err)
+	}
+	slog.Info("telegram: sent agent image as document", "bytes", len(raw), "mime", mimeType, "msg_id", sent.ID)
+	return sent.ID, nil
+}
+
+// imageFilenameFromMime returns a sensible upload filename for a given
+// mime type. Telegram inspects bytes for content sniffing, so the
+// extension is purely cosmetic — but a good default makes the image
+// preview consistent across clients.
+func imageFilenameFromMime(mime string) string {
+	clean := strings.ToLower(strings.TrimSpace(mime))
+	switch clean {
+	case "image/png", "":
+		return "image.png"
+	case "image/jpeg", "image/jpg":
+		return "image.jpg"
+	case "image/gif":
+		return "image.gif"
+	case "image/webp":
+		return "image.webp"
+	}
+	// Anything else: only honour `image/<ext>` shapes; non-`image/`
+	// strings collapse to .bin so callers don't end up uploading
+	// garbage extensions.
+	if !strings.HasPrefix(clean, "image/") {
+		return "image.bin"
+	}
+	ext := strings.TrimPrefix(clean, "image/")
+	if ext == "" || strings.ContainsAny(ext, "/ \t") {
+		return "image.bin"
+	}
+	return "image." + ext
+}
+
+// formatImageMarker returns the inline blurb spliced into the streamed
+// text reply when the agent sends an image. Either confirms the upload
+// (with a Telegram message-link suffix once the photo lands) or notes
+// the failure so users do not silently miss the image.
+func formatImageMarker(mime string, sentMsgID int, err error) string {
+	label := strings.TrimPrefix(mime, "image/")
+	if label == "" {
+		label = "image"
+	}
+	if err != nil {
+		return fmt.Sprintf("\n\n🖼️ _failed to send %s: %v_\n", label, err)
+	}
+	if sentMsgID == 0 {
+		return fmt.Sprintf("\n\n🖼️ _%s sent_\n", label)
+	}
+	return fmt.Sprintf("\n\n🖼️ _%s sent (msg #%d)_\n", label, sentMsgID)
 }
 
 func (h *Handler) buildVoiceInfo(userID string) *command.VoiceInfo {

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
@@ -465,6 +466,42 @@ func TestBuildPromptContent_Telegram(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestImageFilenameFromMime(t *testing.T) {
+	cases := map[string]string{
+		"image/png":   "image.png",
+		"image/jpeg":  "image.jpg",
+		"image/jpg":   "image.jpg",
+		"image/gif":   "image.gif",
+		"image/webp":  "image.webp",
+		"":            "image.png",
+		"image/heic":  "image.heic",
+		"image/avif ": "image.avif",
+		// Junk that contains separators must not become a filename.
+		"image/foo bar": "image.bin",
+		"weird":         "image.bin",
+	}
+	for mime, want := range cases {
+		if got := imageFilenameFromMime(mime); got != want {
+			t.Errorf("imageFilenameFromMime(%q) = %q, want %q", mime, got, want)
+		}
+	}
+}
+
+func TestFormatImageMarker(t *testing.T) {
+	got := formatImageMarker("image/png", 42, nil)
+	if !contains(got, "png") || !contains(got, "msg #42") {
+		t.Errorf("happy-path marker missing fields: %q", got)
+	}
+	got = formatImageMarker("image/jpeg", 0, nil)
+	if !contains(got, "jpeg") || contains(got, "msg #") {
+		t.Errorf("zero-id marker should omit msg #, got: %q", got)
+	}
+	got = formatImageMarker("image/png", 0, fmt.Errorf("boom"))
+	if !contains(got, "failed") || !contains(got, "boom") {
+		t.Errorf("error marker missing surface text: %q", got)
 	}
 }
 
