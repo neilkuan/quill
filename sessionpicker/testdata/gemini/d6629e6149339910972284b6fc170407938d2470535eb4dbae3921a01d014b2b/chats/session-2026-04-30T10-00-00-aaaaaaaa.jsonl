@@ -1,0 +1,4 @@
+{"sessionId":"aaaaaaaa-0000-0000-0000-000000000001","projectHash":"d6629e6149339910972284b6fc170407938d2470535eb4dbae3921a01d014b2b","startTime":"2026-04-30T10:00:00.000Z","lastUpdated":"2026-04-30T10:00:00.000Z","kind":"main","directories":["/home/test/proj-a"]}
+{"id":"msg-1","timestamp":"2026-04-30T10:00:01.000Z","type":"user","content":[{"type":"text","text":"<sender_context>\n{\"schema\":\"quill.sender.v1\"}\n</sender_context>\n\nhelp me refactor proj-a"}]}
+{"id":"msg-2","timestamp":"2026-04-30T10:00:02.000Z","type":"gemini","content":"sure, here's the plan"}
+{"$set":{"lastUpdated":"2026-04-30T10:05:00.000Z","summary":"refactor request for proj-a"}}

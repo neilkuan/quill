@@ -1,0 +1,3 @@
+{"sessionId":"bbbbbbbb-0000-0000-0000-000000000002","projectHash":"6ad9416c046c79fdc75ff16476d35ef6c57df4dd37e9803a7b474eb1778bb50d","startTime":"2026-04-30T11:00:00.000Z","lastUpdated":"2026-04-30T11:00:00.000Z","kind":"main","directories":["/home/test/proj-b"]}
+{"id":"msg-1","timestamp":"2026-04-30T11:00:01.000Z","type":"user","content":"plain string body for proj-b"}
+{"$set":{"lastUpdated":"2026-04-30T11:30:00.000Z"}}

@@ -43,7 +43,7 @@ Supports Kiro CLI, Claude Code, Codex, GitHub Copilot CLI, and any ACP-compatibl
 
 > ⚠️ **copilot**: Requires a paid GitHub Copilot subscription. ACP support is currently in public preview — behavior may change.
 >
-> ⚠️ **gemini**: ACP support is exposed via the `--experimental-acp` flag and may evolve. `/pick` (session picker) is not yet implemented for Gemini — other commands work as usual.
+> ⚠️ **gemini**: ACP support is exposed via the `--experimental-acp` flag and may evolve.
 
 ---
 
@@ -269,7 +269,7 @@ The `/pick` command lets users browse and resume an agent's historical sessions 
 | Claude Code | `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` | ✅ |
 | GitHub Copilot CLI | `~/.copilot/session-state/<uuid>/` (`workspace.yaml` + `events.jsonl`) | ✅ (best-effort from `workspace.yaml`) |
 | Codex | `~/.codex/history.jsonl` (flat index) | ❌ — Codex's history entries carry no cwd. `List` returns an empty slice when a non-empty cwd is passed, rather than silently returning unfiltered results |
-| Gemini CLI | `~/.gemini/tmp/<sha256(cwd)>/chats/` | ❌ — picker not implemented yet (chat JSON schema undocumented) |
+| Gemini CLI | `~/.gemini/tmp/<project-tmp-id>/chats/session-*.jsonl` | ✅ — matches `projectHash` (`sha256(cwd)`) embedded in each session, plus any cwd added via `/dir add` |
 
 When Codex sessions are displayed, the picker UI will surface a note about the missing cwd filter so users know to drop the cwd argument to see any results.
 

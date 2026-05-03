@@ -43,7 +43,7 @@
 
 > ⚠️ **copilot**：需付費 GitHub Copilot 訂閱。ACP 支援目前為 public preview — 行為可能會變動。
 >
-> ⚠️ **gemini**：ACP 支援透過 `--experimental-acp` flag 暴露，行為可能變動。`/pick`（session picker）尚未支援 Gemini，其他指令照常運作。
+> ⚠️ **gemini**：ACP 支援透過 `--experimental-acp` flag 暴露，行為可能變動。
 
 ---
 
@@ -284,7 +284,7 @@ listen = ":8080"
 | Claude Code | `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` | ✅ |
 | GitHub Copilot CLI | `~/.copilot/session-state/<uuid>/`（`workspace.yaml` + `events.jsonl`） | ✅（best-effort 從 `workspace.yaml` 讀） |
 | Codex | `~/.codex/history.jsonl`（扁平索引） | ❌ — Codex history 的每一筆沒有 cwd 欄位。傳入非空 cwd 時 `List` 回空 slice，不會回傳未過濾的結果 |
-| Gemini CLI | `~/.gemini/tmp/<sha256(cwd)>/chats/` | ❌ — picker 尚未實作（chats/ 內部 JSON schema 尚未官方文件化） |
+| Gemini CLI | `~/.gemini/tmp/<project-tmp-id>/chats/session-*.jsonl` | ✅ — 比對每筆 session 內嵌的 `projectHash`（`sha256(cwd)`），以及任何透過 `/dir add` 加入的 cwd |
 
 顯示 Codex session 時，picker UI 會提示「該 agent 不支援 cwd 過濾」，讓使用者知道需要改用空 cwd 才能看到結果。
 

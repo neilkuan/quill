@@ -1,0 +1,2 @@
+{"sessionId":"cccccccc-0000-0000-0000-000000000003","projectHash":"d6629e6149339910972284b6fc170407938d2470535eb4dbae3921a01d014b2b","startTime":"2026-04-30T09:00:00.000Z","lastUpdated":"2026-04-30T09:00:00.000Z","kind":"subagent","directories":["/home/test/proj-a"]}
+{"id":"msg-1","timestamp":"2026-04-30T09:00:01.000Z","type":"user","content":"this is a subagent — should be skipped"}

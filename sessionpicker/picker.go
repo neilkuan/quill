@@ -119,6 +119,8 @@ func Detect(agentCommand string) (Picker, bool) {
 		return NewCopilotPicker(""), true
 	case "codex-acp", "codex":
 		return NewCodexPicker(""), true
+	case "gemini":
+		return NewGeminiPicker(""), true
 	}
 	return nil, false
 }

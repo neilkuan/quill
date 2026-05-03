@@ -1,0 +1,4 @@
+{"sessionId":"dddddddd-0000-0000-0000-000000000004","projectHash":"54e88c0d26f674153063531a8c4f191696db263d0180b7cae8c12bef73897873","startTime":"2026-04-30T12:00:00.000Z","lastUpdated":"2026-04-30T12:00:00.000Z","kind":"main"}
+{"id":"msg-1","timestamp":"2026-04-30T12:00:01.000Z","type":"user","content":[{"type":"text","text":"<sender_context>\n{\"schema\":\"quill.sender.v1\"}\n</sender_context>\n\nwork in proj-c, parent dir is registry-named"}]}
+{"$set":{"directories":["/home/test/proj-c"],"lastUpdated":"2026-04-30T12:10:00.000Z"}}
+{"$rewindTo":"msg-99-does-not-exist"}

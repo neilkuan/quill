@@ -29,6 +29,8 @@ func TestDetect(t *testing.T) {
 		{"copilot absolute path", "/usr/local/bin/copilot", true, "copilot"},
 		{"codex", "codex", true, "codex-acp"},
 		{"codex-acp", "codex-acp", true, "codex-acp"},
+		{"gemini", "gemini", true, "gemini"},
+		{"gemini absolute path", "/usr/local/bin/gemini", true, "gemini"},
 		{"unknown", "some-other-agent", false, ""},
 		{"empty", "", false, ""},
 	}
