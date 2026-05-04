@@ -24,6 +24,7 @@
 - **中途打斷回覆** — `/stop` 指令或 Discord 點擊 🛑 reaction 即可中斷；session 保留、上下文不會丟失（ACP `session/cancel` + watchdog 保底）
 - **Session Pool** — 每個討論串/聊天一個 CLI 程序，自動生命週期管理
 - **Session 管理** — Bot 指令（`sessions`/`reset`/`info`/`resume`/`stop`）、LRU 驅逐、HTTP API 監控
+- **排程提示（Scheduled Prompts）** — `/cron` 讓使用者排程 cron／interval／一次性 prompt，到時間自動 fire 到聊天視窗，並在 `<sender_context>` 帶上 `trigger:"cron"` 標記，agent 一眼就能分辨是排程觸發還是人類訊息
 - **ACP 協定** — 基於 stdio 的 JSON-RPC
 - **Kubernetes 就緒** — 包含 Dockerfile 供容器化部署
 
@@ -259,6 +260,7 @@ api_key = "${OPENAI_API_KEY}"
 | `/pick` | 瀏覽並載入歷史 agent session。無參數或 `all` 時 Discord 會回 select menu、Telegram 會回 inline keyboard，點選即可 resume；`/pick <N>` 載入前一次列表的第 N 筆；`/pick load <id>` 依 session ID 直接載入（文字路徑仍保留給熟手）；`/pick all` 跳過 cwd 過濾（適用於 Codex 等無 cwd 欄位的 agent）。`history`、`session-picker`、`session_picker`、`sessionpicker` 為相容舊寫法的同義指令。 |
 | `/mode` | 列出或切換 session 的 agent mode（ACP `session/set_mode`）。無參數時 Discord 會回 select menu、Telegram 會回 inline keyboard，可點選切換；`/mode <id>` 或 `/mode <N>` 直接切。需要當前 thread 已有活著的 session（先傳訊息觸發），且 agent 在 session setup 時回報 `modes` 物件。 |
 | `/model` | 列出或切換 session 使用的 LLM model（ACP `session/set_model`）。互動 UX 與 `/mode` 相同，Discord／Telegram 互動、Teams 純文字。需要 agent 在 session setup 時回報 `models` 物件。 |
+| `/cron` | 排程訊息自動 fire 到當前聊天。子指令：`/cron add <schedule> <prompt>`、`/cron list`、`/cron rm <id>`。排程格式支援標準 5-field cron（`0 9 * * *`）、`every 5m`、`at 09:00`、`at 2026-05-05 09:00`、`in 30m`。詳見 [排程提示（`/cron`）](#排程提示cron) 一節。可在 `[cronjob] disabled = true` 全域關閉。 |
 
 每則 agent 回覆末尾會附上一行小字 footer，顯示當下 session 使用的 mode 與 model，例如 `— mode: `卡卡西` · model: `claude-sonnet-4.6``，讓使用者不必 `/info` 就知道這則回覆是哪個 persona、哪個後端模型產出的。agent 沒回報 modes／models 時 footer 會省略。
 
@@ -297,6 +299,60 @@ listen = ":8080"
 | Gemini CLI | `~/.gemini/tmp/<project-tmp-id>/chats/session-*.jsonl` | ✅ — 比對每筆 session 內嵌的 `projectHash`（`sha256(cwd)`），以及任何透過 `/dir add` 加入的 cwd |
 
 顯示 Codex session 時，picker UI 會提示「該 agent 不支援 cwd 過濾」，讓使用者知道需要改用空 cwd 才能看到結果。
+
+---
+
+##### 排程提示（`/cron`）
+
+讓使用者排程 prompt 自動 fire 到聊天視窗。每次觸發都走跟一般使用者訊息一樣的 agent 路徑，但會在既有的 `quill.sender.v1` `<sender_context>` 信封裡多帶 `trigger:"cron"`（加上 `cron_id`、`cron_schedule`、`cron_fire_time`），agent 因此能分辨這次是排程觸發還是人類訊息。
+
+###### 排程格式
+
+| 形式 | 範例 | 行為 |
+|---|---|---|
+| 標準 5-field cron | `0 9 * * *` | 重複觸發；最小粒度 1 分鐘 |
+| 固定間隔 | `every 5m`、`every 2h` | 重複觸發；低於 `min_interval_seconds`（預設 60 秒）會被拒絕 |
+| 相對一次性 | `in 30m`、`in 2h` | 觸發一次後從 store 自動刪除 |
+| 今天／明天 HH:MM | `at 09:00` | 在設定時區下、下次到達 HH:MM 時觸發一次 |
+| 絕對時間 | `at 2026-05-05 09:00` | 在設定時區下的指定時刻觸發一次 |
+
+###### 範例
+
+```
+/cron add 0 9 * * * 每日 standup 摘要
+/cron add every 30m 看一下 staging 最新部署狀態
+/cron add in 2h 提醒我去 deploy
+/cron add at 09:00 拉昨天的 CI 失敗摘要
+/cron list
+/cron rm a3f5b201
+```
+
+###### 各平台 UX
+
+- **Telegram** — `/cron list` 顯示純文字，每筆下方一個 🗑️ InlineKeyboard 按鈕，點按即刪除。
+- **Discord** — 原生 slash command，子指令 `add` / `list` / `rm`；`list` 回純文字（cron ID、schedule、prompt）。
+- **Teams** — 純文字 `/cron` 指令，子指令同上。
+
+###### 設定
+
+```toml
+[cronjob]
+# disabled = false                  # 設為 true 可完全停用 /cron
+# max_per_thread = 20               # 每個 thread 上限
+# min_interval_seconds = 60         # 拒絕「every 30s」；one-shot 不受此限
+# queue_size = 50                   # 每 thread 觸發緩衝；溢出會 drop 並回 chat marker
+# timezone = "UTC"                  # 顯示與解析「at HH:MM」用的時區
+# store_path = "./.quill/cronjobs.json"
+```
+
+###### V1 已知限制
+
+- **純 FIFO queue** — 使用者跟 agent 講久一點，期間累積的 interval 觸發會在使用者結束後一口氣灌進來。V2 可能加 coalesce。
+- **沒有 pause／resume** — V1 只支援 `add` / `list` / `rm`；`Job` 結構裡的 `Disabled` 欄位保留給 V2 用。
+- **沒有執行歷史** — 觸發紀錄只能從 `slog` 看；可查詢的歷史是 V2 工作。
+- **Best-effort 投遞** — bot 在預定時間離線的話，那次觸發**會丟失**（重啟後不會補打 missed fire）。
+- **單一 instance 假設** — 兩個 Quill 程序共用同一個 `cronjobs.json` 會雙觸發。每個 store 只跑一個 instance。
+- **Teams `serviceURL` 快取** — Teams 的 Bot Framework 每次發送都需要 `serviceURL`，Quill 把每個 conversation 最近一次的 `serviceURL` 存在記憶體。process 重啟後，使用者要在該 conversation 發任一則訊息把 cache 重新建立起來，cron 才能 post 訊息。
 
 ---
 

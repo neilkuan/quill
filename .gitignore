@@ -36,3 +36,4 @@ example/data/config/kiro/*
 
 .venv/**/*
 *.py
+.quill/

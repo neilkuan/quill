@@ -24,6 +24,7 @@ This is a **Go rewrite** of [openab](https://github.com/openabdev/openab) (origi
 - **Interrupt mid-reply** — `/stop` command or tap-to-cancel 🛑 reaction on Discord; session stays alive, context preserved (ACP `session/cancel` with watchdog fallback)
 - **Session pool** — one CLI process per thread/chat, automatic lifecycle management
 - **Session management** — bot commands (`sessions`/`reset`/`info`/`resume`/`stop`), LRU eviction, HTTP API for monitoring
+- **Scheduled prompts** — `/cron` lets users schedule cron / interval / one-shot prompts that fire automatically into the chat with a `trigger:"cron"` marker so the agent can distinguish scheduled triggers from human input
 - **ACP protocol** — JSON-RPC over stdio
 - **Kubernetes ready** — includes Dockerfile for containerized deployment
 
@@ -244,6 +245,7 @@ Commands are registered as native platform commands — Discord Slash Commands a
 | `/pick` | Browse and load historical agent sessions. Without args (or with `all`), Discord replies with a select menu and Telegram with an inline keyboard — tap to resume. `/pick <N>` loads the Nth entry from the previous listing, `/pick load <id>` loads by session ID (text paths kept for power users). `/pick all` skips the cwd filter. `history`, `session-picker`, `session_picker`, and `sessionpicker` are legacy aliases. |
 | `/mode` | List or switch the session's agent mode (ACP `session/set_mode`). With no argument, Discord replies with a select menu and Telegram with an inline keyboard so users can tap to pick. `/mode <id>` or `/mode <N>` switches directly. Only works once an active session exists in the thread (send a message first if needed). Requires the agent to advertise a `modes` object during session setup. |
 | `/model` | List or switch the session's LLM model (ACP `session/set_model`). Same UX as `/mode` — interactive on Discord / Telegram, text-only on Teams. Requires the agent to advertise a `models` object during session setup. |
+| `/cron` | Schedule prompts to fire automatically into this chat. Subcommands: `/cron add <schedule> <prompt>`, `/cron list`, `/cron rm <id>`. Schedule formats: standard 5-field cron (`0 9 * * *`), `every 5m`, `at 09:00`, `at 2026-05-05 09:00`, `in 30m`. See the [Scheduled Prompts](#scheduled-prompts-cron) section. Disable globally with `[cronjob] disabled = true`. |
 
 Every agent reply also carries a small footer showing the session's current mode and model — e.g. `— mode: `卡卡西` · model: `claude-sonnet-4.6`` — so users know which persona and backend produced the answer without running `/info`. The footer is omitted when the agent advertises neither.
 
@@ -282,6 +284,60 @@ The `/pick` command lets users browse and resume an agent's historical sessions 
 | Gemini CLI | `~/.gemini/tmp/<project-tmp-id>/chats/session-*.jsonl` | ✅ — matches `projectHash` (`sha256(cwd)`) embedded in each session, plus any cwd added via `/dir add` |
 
 When Codex sessions are displayed, the picker UI will surface a note about the missing cwd filter so users know to drop the cwd argument to see any results.
+
+---
+
+##### Scheduled Prompts (`/cron`)
+
+Users can schedule prompts to fire automatically into their chat. Each fire goes through the same agent path as a normal user message but carries `trigger:"cron"` (plus `cron_id`, `cron_schedule`, `cron_fire_time`) inside the existing `quill.sender.v1` `<sender_context>` envelope, so the agent can distinguish scheduled triggers from human input.
+
+###### Schedule formats
+
+| Form | Example | Behavior |
+|---|---|---|
+| Standard 5-field cron | `0 9 * * *` | Recurring; minimum granularity 1 minute |
+| Interval | `every 5m`, `every 2h` | Recurring; rejected if below `min_interval_seconds` (default 60) |
+| Relative one-shot | `in 30m`, `in 2h` | Fires once, then auto-deleted from the store |
+| Today/tomorrow at HH:MM | `at 09:00` | Fires once at the next occurrence of HH:MM in the configured timezone |
+| Absolute timestamp | `at 2026-05-05 09:00` | Fires once at that instant in the configured timezone |
+
+###### Examples
+
+```
+/cron add 0 9 * * * Daily standup digest
+/cron add every 30m Check the latest deploy status on staging
+/cron add in 2h Remind me to deploy
+/cron add at 09:00 Pull yesterday's CI failure summary
+/cron list
+/cron rm a3f5b201
+```
+
+###### Per-platform UX
+
+- **Telegram** — `/cron list` returns plain text with one 🗑️ InlineKeyboard button per row; tap to delete.
+- **Discord** — Native slash command with `add` / `list` / `rm` subcommands; `list` returns text with the cron ID, schedule, and prompt.
+- **Teams** — Text-only `/cron` command with the same subcommands.
+
+###### Configuration
+
+```toml
+[cronjob]
+# disabled = false                  # Set to true to disable /cron entirely
+# max_per_thread = 20               # Per-thread cap
+# min_interval_seconds = 60         # Reject "every 30s"; one-shots are exempt
+# queue_size = 50                   # Per-thread fire buffer; overflow drops with chat marker
+# timezone = "UTC"                  # Display + parse TZ for "at HH:MM"
+# store_path = "./.quill/cronjobs.json"
+```
+
+###### V1 limitations
+
+- **Pure FIFO queue** — if the user holds the connection for N minutes, queued interval fires drain back-to-back when the user finishes. V2 may add coalescing.
+- **No pause/resume** — only `add` / `list` / `rm` in V1. The `Disabled` field on the underlying `Job` struct is reserved for V2.
+- **No execution history** — cron fires are visible in `slog`; queryable history is V2.
+- **Best-effort delivery** — if the bot is offline when a fire is due, that fire is **lost** (the scheduler does not catch up missed fires on startup).
+- **Single instance only** — two Quill processes sharing the same `cronjobs.json` will both fire every job. Run a single instance per store.
+- **Teams `serviceURL` cache** — Teams' Bot Framework requires a `serviceURL` per send. Quill caches the most-recent `serviceURL` per conversation in memory. After a process restart, the user must send any message in the conversation to repopulate the cache before cron fires can post.
 
 ---
 
