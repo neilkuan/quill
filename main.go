@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/api"
 	appconfig "github.com/neilkuan/quill/config"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/discord"
 	"github.com/neilkuan/quill/platform"
 	"github.com/neilkuan/quill/sessionpicker"
@@ -153,12 +155,33 @@ func main() {
 		slog.Info("session picker not available for this agent", "agent_cmd", cfg.Agent.Command)
 	}
 
+	// Cronjob: open store, build registry + gates. Done before adapters
+	// because adapters now receive the store reference and the registry
+	// is registered against during a later RegisterCron(...) pass.
+	var (
+		cronStore     *cronjob.Store
+		cronRegistry  *cronjob.Registry
+		cronGates     *cronjob.Gates
+		cronScheduler *cronjob.Scheduler
+		cronCancel    context.CancelFunc
+	)
+	if !cfg.Cronjob.Disabled {
+		cronStore, err = cronjob.Open(cfg.Cronjob.StorePath)
+		if err != nil {
+			slog.Error("failed to open cronjob store", "error", err)
+			os.Exit(1)
+		}
+		cronRegistry = cronjob.NewRegistry()
+		cronGates = cronjob.NewGates(cfg.Cronjob.QueueSize)
+		slog.Info("cronjob enabled", "store", cfg.Cronjob.StorePath, "queue_size", cfg.Cronjob.QueueSize)
+	}
+
 	// Build platforms
 	var platforms []platform.Platform
 	var healthChecks []api.HealthCheck
 
 	if cfg.Discord.Enabled {
-		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, cfg.TTS, cfg.Markdown, picker, nil, cfg.Cronjob)
+		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, cfg.TTS, cfg.Markdown, picker, cronStore, cfg.Cronjob)
 		if err != nil {
 			slog.Error("failed to create discord adapter", "error", err)
 			os.Exit(1)
@@ -168,10 +191,13 @@ func main() {
 		slog.Info("discord adapter registered",
 			"channels", cfg.Discord.AllowedChannels,
 			"allowed_user_id", cfg.Discord.AllowedUserIDs)
+		if cronRegistry != nil {
+			adapter.RegisterCron(cronRegistry)
+		}
 	}
 
 	if cfg.Telegram.Enabled {
-		adapter, err := telegram.NewAdapter(cfg.Telegram, pool, t, synth, cfg.TTS, cfg.Markdown, picker, nil, cfg.Cronjob)
+		adapter, err := telegram.NewAdapter(cfg.Telegram, pool, t, synth, cfg.TTS, cfg.Markdown, picker, cronStore, cfg.Cronjob)
 		if err != nil {
 			slog.Error("failed to create telegram adapter", "error", err)
 			os.Exit(1)
@@ -181,10 +207,13 @@ func main() {
 		slog.Info("telegram adapter registered",
 			"allowed_chats", cfg.Telegram.AllowedChats,
 			"allowed_user_id", cfg.Telegram.AllowedUserIDs)
+		if cronRegistry != nil {
+			adapter.RegisterCron(cronRegistry)
+		}
 	}
 
 	if cfg.Teams.Enabled {
-		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown, picker, nil, cfg.Cronjob)
+		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown, picker, cronStore, cfg.Cronjob)
 		if err != nil {
 			slog.Error("failed to create teams adapter", "error", err)
 			os.Exit(1)
@@ -192,6 +221,9 @@ func main() {
 		platforms = append(platforms, adapter)
 		healthChecks = append(healthChecks, adapter.Healthy)
 		slog.Info("teams adapter registered", "listen", cfg.Teams.Listen)
+		if cronRegistry != nil {
+			adapter.RegisterCron(cronRegistry)
+		}
 	}
 
 	// Start HTTP API server (optional)
@@ -215,6 +247,15 @@ func main() {
 			slog.Error("failed to start platform", "error", err)
 			os.Exit(1)
 		}
+	}
+
+	// Start the cronjob scheduler once dispatchers are registered.
+	if cronStore != nil && cronRegistry != nil && cronGates != nil {
+		var schedCtx context.Context
+		schedCtx, cronCancel = context.WithCancel(context.Background())
+		cronScheduler = cronjob.NewScheduler(cronStore, cronRegistry, cronGates, time.Second)
+		go cronScheduler.Run(schedCtx)
+		slog.Info("cronjob scheduler started")
 	}
 
 	// Spawn cleanup goroutine
@@ -253,6 +294,15 @@ func main() {
 			slog.Warn("platform stop error", "error", err)
 		}
 	}
+
+	// Stop cronjob scheduler before pool so in-flight Fire calls finish.
+	if cronCancel != nil {
+		cronCancel()
+	}
+	if cronGates != nil {
+		cronGates.Close()
+	}
+
 	pool.Shutdown()
 	slog.Info("🦆 quill shut down 🦆🦆🦆")
 }
