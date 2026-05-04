@@ -38,6 +38,10 @@ type Handler struct {
 	// Picker lists historical sessions for /pick. Nil when
 	// the configured agent backend is not recognised by sessionpicker.Detect.
 	Picker sessionpicker.Picker
+	// Mentions records display_name → Teams Account so the agent's
+	// <at>Name</at> output can be turned back into Bot Framework mention
+	// entities on outbound activities. Nil disables the feature.
+	Mentions *MentionDirectory
 
 	// Test-only override hooks. When non-nil, replace the default
 	// dispatch so adapter-level routing tests don't have to spin up the
@@ -71,6 +75,11 @@ func (h *Handler) OnMessage(activity *Activity) {
 	if !h.accessGateAllows(activity) {
 		return
 	}
+
+	// Build up the mention directory before doing anything else — even
+	// messages that fail later command parsing teach us about users.
+	h.Mentions.Record(activity.From)
+	h.Mentions.RecordEntities(activity.Entities)
 
 	conversationID := activity.Conversation.ID
 	userID := activity.From.ID
@@ -193,7 +202,7 @@ func (h *Handler) OnMessage(activity *Activity) {
 	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "files", len(fileAttachments), "session_key", sessionKey)
 
 	// Send initial "thinking" message
-	thinkingResp, err := h.Client.SendActivity(
+	thinkingResp, err := h.sendActivity(
 		activity.ServiceURL,
 		conversationID,
 		&Activity{
@@ -209,7 +218,7 @@ func (h *Handler) OnMessage(activity *Activity) {
 
 	// Get or create ACP session
 	if err := h.Pool.GetOrCreate(sessionKey); err != nil {
-		h.Client.UpdateActivity(
+		h.updateActivity(
 			activity.ServiceURL,
 			conversationID,
 			thinkingResp.ID,
@@ -258,7 +267,7 @@ func (h *Handler) OnMessage(activity *Activity) {
 	}
 
 	if result != nil {
-		h.Client.UpdateActivity(
+		h.updateActivity(
 			activity.ServiceURL,
 			conversationID,
 			thinkingResp.ID,
@@ -360,7 +369,7 @@ func (h *Handler) handleCommand(activity *Activity, cmd *command.Command) {
 			// Reply to original command message for first chunk
 			resp.ReplyToID = activity.ID
 		}
-		h.Client.SendActivity(activity.ServiceURL, activity.Conversation.ID, resp)
+		h.sendActivity(activity.ServiceURL, activity.Conversation.ID, resp)
 	}
 }
 
@@ -416,7 +425,7 @@ func (h *Handler) streamPrompt(
 
 					if content != lastContent {
 						preview := platform.TruncateUTF8(content, 28000, "\n…")
-						h.Client.UpdateActivity(
+						h.updateActivity(
 							serviceURL,
 							conversationID,
 							msgID,
@@ -570,7 +579,7 @@ func (h *Handler) streamPrompt(
 
 		// If the prompt returned an error, surface it
 		if promptErr != nil {
-			h.Client.UpdateActivity(
+			h.updateActivity(
 				serviceURL,
 				conversationID,
 				msgID,
@@ -619,7 +628,7 @@ func (h *Handler) streamPrompt(
 		chunks := platform.SplitMessage(finalContent, 28000)
 		for i, chunk := range chunks {
 			if i == 0 {
-				h.Client.UpdateActivity(
+				h.updateActivity(
 					serviceURL,
 					conversationID,
 					msgID,
@@ -630,7 +639,7 @@ func (h *Handler) streamPrompt(
 					},
 				)
 			} else {
-				h.Client.SendActivity(
+				h.sendActivity(
 					serviceURL,
 					conversationID,
 					&Activity{
@@ -670,7 +679,7 @@ func (h *Handler) sendModeCard(activity *Activity, threadKey string, listing com
 		Type:        "message",
 		Attachments: []Attachment{att},
 	}
-	if _, err := h.Client.SendActivity(activity.ServiceURL, activity.Conversation.ID, resp); err != nil {
+	if _, err := h.sendActivity(activity.ServiceURL, activity.Conversation.ID, resp); err != nil {
 		slog.Warn("teams: failed to send mode card", "error", err)
 	}
 }
@@ -682,7 +691,7 @@ func (h *Handler) sendModelCard(activity *Activity, threadKey string, listing co
 		Type:        "message",
 		Attachments: []Attachment{att},
 	}
-	if _, err := h.Client.SendActivity(activity.ServiceURL, activity.Conversation.ID, resp); err != nil {
+	if _, err := h.sendActivity(activity.ServiceURL, activity.Conversation.ID, resp); err != nil {
 		slog.Warn("teams: failed to send model card", "error", err)
 	}
 }
@@ -699,6 +708,36 @@ func (h *Handler) buildVoiceInfo() *command.VoiceInfo {
 		vi.STTProvider = "openai"
 	}
 	return vi
+}
+
+// applyMentions populates `a.Entities` with Bot Framework mention
+// entities derived from any <at>Name</at> tags in `a.Text`. Existing
+// entries on `a.Entities` are preserved — Teams ignores duplicates
+// keyed by `text` + `mentioned.id` so appending is safe. No-op when
+// the handler has no mention directory or `a.Text` carries no <at> tags.
+func (h *Handler) applyMentions(a *Activity) {
+	if a == nil || h.Mentions == nil {
+		return
+	}
+	entities := h.Mentions.BuildMentionEntities(a.Text)
+	if len(entities) == 0 {
+		return
+	}
+	a.Entities = append(a.Entities, entities...)
+}
+
+// sendActivity wraps BotClient.SendActivity, adding mention entities
+// before dispatch.
+func (h *Handler) sendActivity(serviceURL, conversationID string, activity *Activity) (*Activity, error) {
+	h.applyMentions(activity)
+	return h.Client.SendActivity(serviceURL, conversationID, activity)
+}
+
+// updateActivity wraps BotClient.UpdateActivity, adding mention
+// entities before dispatch.
+func (h *Handler) updateActivity(serviceURL, conversationID, activityID string, activity *Activity) error {
+	h.applyMentions(activity)
+	return h.Client.UpdateActivity(serviceURL, conversationID, activityID, activity)
 }
 
 // --- Helper functions ---

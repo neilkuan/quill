@@ -115,12 +115,12 @@ func (h *Handler) updateCard(activity *Activity, card Attachment) {
 		Type:        "message",
 		Attachments: []Attachment{card},
 	}
-	err := h.Client.UpdateActivity(activity.ServiceURL, activity.Conversation.ID, activity.ReplyToID, resp)
+	err := h.updateActivity(activity.ServiceURL, activity.Conversation.ID, activity.ReplyToID, resp)
 	if err == nil {
 		return
 	}
 	slog.Warn("teams: UpdateActivity failed, falling back to new SendActivity", "error", err)
-	_, _ = h.Client.SendActivity(activity.ServiceURL, activity.Conversation.ID, &Activity{
+	_, _ = h.sendActivity(activity.ServiceURL, activity.Conversation.ID, &Activity{
 		Type:       "message",
 		Text:       fmt.Sprintf("⚠️ Card update failed: %v", err),
 		TextFormat: "markdown",
