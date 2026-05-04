@@ -697,12 +697,14 @@ func (h *Handler) sendCronList(ctx context.Context, b *bot.Bot, chatID int64, th
 	msg *models.Message, sessionKey string) {
 
 	if h.CronStore == nil || h.CronCfg.Disabled {
-		b.SendMessage(ctx, &bot.SendMessageParams{
+		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:          chatID,
 			MessageThreadID: threadID,
 			Text:            "⚠️ Cron jobs are disabled on this bot.",
 			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
-		})
+		}); err != nil {
+			slog.Warn("telegram /cron list (disabled) send failed", "error", err)
+		}
 		return
 	}
 
@@ -713,21 +715,26 @@ func (h *Handler) sendCronList(ctx context.Context, b *bot.Bot, chatID int64, th
 
 	jobs := command.ListCronJobs(h.CronStore, sessionKey)
 	if len(jobs) == 0 {
-		b.SendMessage(ctx, &bot.SendMessageParams{
+		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:          chatID,
 			MessageThreadID: threadID,
-			Text:            "📭 No scheduled prompts. Create one with `/cron add <schedule> <prompt>`.",
-			ParseMode:       models.ParseModeMarkdown,
+			Text:            "📭 No scheduled prompts. Create one with /cron add <schedule> <prompt>.",
 			ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
-		})
+		}); err != nil {
+			slog.Warn("telegram /cron list (empty) send failed", "error", err)
+		}
 		return
 	}
 
+	// Plain text body: cron expressions contain '*' which Telegram's
+	// legacy Markdown mode would try to interpret as bold markers and
+	// silently reject the whole message. The list reads fine without
+	// formatting; the InlineKeyboard buttons carry the interactive bit.
 	rows := make([][]models.InlineKeyboardButton, 0, len(jobs))
 	var body strings.Builder
-	body.WriteString("⏰ *Scheduled prompts in this thread*\n\n")
+	body.WriteString("⏰ Scheduled prompts in this thread\n\n")
 	for _, j := range jobs {
-		body.WriteString(fmt.Sprintf("`%s` — `%s` — next %s\n  → %s\n",
+		body.WriteString(fmt.Sprintf("%s — %s — next %s\n  → %s\n",
 			j.ID, j.Schedule, j.NextFire.In(tz).Format("2006-01-02 15:04 MST"),
 			truncate(j.Prompt, 80)))
 
@@ -744,14 +751,15 @@ func (h *Handler) sendCronList(ctx context.Context, b *bot.Bot, chatID int64, th
 		})
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
+	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:          chatID,
 		MessageThreadID: threadID,
 		Text:            body.String(),
-		ParseMode:       models.ParseModeMarkdown,
 		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 		ReplyMarkup:     &models.InlineKeyboardMarkup{InlineKeyboard: rows},
-	})
+	}); err != nil {
+		slog.Warn("telegram /cron list send failed", "error", err)
+	}
 }
 
 func truncateForButton(s string, max int) string {

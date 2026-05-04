@@ -258,8 +258,10 @@ func isTransientNetworkError(err error) bool {
 }
 
 // RegisterCron creates the per-platform cron Dispatcher and registers
-// it with the prefix "telegram" in the provided registry. Called by
-// main.go after the adapter has been constructed so a.b is non-nil.
+// it with the prefix "tg" in the provided registry. The prefix must
+// match buildSessionKey's output ("tg:<chat>" / "tg:<chat>:<thread>"),
+// not the platform's full name — the scheduler routes by the substring
+// before the first ':' in the threadKey.
 func (a *Adapter) RegisterCron(registry *cronjob.Registry) {
-	registry.Register("telegram", &CronDispatcher{Handler: a.handler, Bot: a.b})
+	registry.Register("tg", &CronDispatcher{Handler: a.handler, Bot: a.b})
 }
