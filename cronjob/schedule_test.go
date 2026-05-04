@@ -34,3 +34,23 @@ func TestCronScheduleInvalid(t *testing.T) {
 		t.Error("expected error for invalid cron expression")
 	}
 }
+
+func TestIntervalScheduleNext(t *testing.T) {
+	s, err := newIntervalSchedule(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("newIntervalSchedule: %v", err)
+	}
+	if s.Kind() != KindInterval {
+		t.Errorf("Kind=%q want %q", s.Kind(), KindInterval)
+	}
+	now := mustTime(t, "2026-05-04T10:00:00Z")
+	if got, want := s.Next(now), now.Add(5*time.Minute); !got.Equal(want) {
+		t.Errorf("Next=%v want %v", got, want)
+	}
+}
+
+func TestIntervalScheduleZeroRejected(t *testing.T) {
+	if _, err := newIntervalSchedule(0); err == nil {
+		t.Error("expected error for zero interval")
+	}
+}

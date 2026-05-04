@@ -32,3 +32,20 @@ func (c *cronSchedule) Kind() Kind { return KindCron }
 func (c *cronSchedule) Next(after time.Time) time.Time {
 	return c.sch.Next(after.UTC())
 }
+
+type intervalSchedule struct {
+	d time.Duration
+}
+
+func newIntervalSchedule(d time.Duration) (*intervalSchedule, error) {
+	if d <= 0 {
+		return nil, fmt.Errorf("interval must be positive, got %v", d)
+	}
+	return &intervalSchedule{d: d}, nil
+}
+
+func (i *intervalSchedule) Kind() Kind { return KindInterval }
+
+func (i *intervalSchedule) Next(after time.Time) time.Time {
+	return after.UTC().Add(i.d)
+}
