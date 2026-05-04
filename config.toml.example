@@ -168,3 +168,18 @@ session_ttl_hours = 24
 # api_key = "${GEMINI_API_KEY}"
 # model = "gemini-3.1-flash-tts-preview"
 # voice = "Orus"               # Orus (Firm, Lower middle pitch)
+
+# ────────────────────────────────────────────────────────────────────
+# [cronjob] — user-scheduled prompts
+#
+# Lets users in any allowed thread schedule recurring or one-shot
+# prompts via /cron add. Set `disabled = true` to fully turn the
+# feature off.
+# ────────────────────────────────────────────────────────────────────
+[cronjob]
+# disabled = false                    # Set to true to disable /cron entirely.
+# max_per_thread = 20                 # Per-thread cap.
+# min_interval_seconds = 60           # Reject "every 30s"; one-shots ("in 30s") are exempt.
+# queue_size = 50                     # Per-thread fire buffer; overflow drops with chat marker.
+# timezone = "UTC"                    # Display + parse TZ for "at HH:MM".
+# store_path = "./.quill/cronjobs.json"
