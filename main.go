@@ -158,7 +158,7 @@ func main() {
 	var healthChecks []api.HealthCheck
 
 	if cfg.Discord.Enabled {
-		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, cfg.TTS, cfg.Markdown, picker)
+		adapter, err := discord.NewAdapter(cfg.Discord, pool, t, synth, cfg.TTS, cfg.Markdown, picker, nil, cfg.Cronjob)
 		if err != nil {
 			slog.Error("failed to create discord adapter", "error", err)
 			os.Exit(1)

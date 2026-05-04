@@ -6,6 +6,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/config"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
@@ -15,9 +16,10 @@ import (
 // Adapter implements platform.Platform for Discord.
 type Adapter struct {
 	session *discordgo.Session
+	handler *Handler // exposed for RegisterCron
 }
 
-func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker) (*Adapter, error) {
+func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker, cronStore *cronjob.Store, cronCfg config.CronjobConfig) (*Adapter, error) {
 	dg, err := discordgo.New("Bot " + cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -49,6 +51,8 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 		TTSConfig:         ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
 		Picker:            picker,
+		CronStore:         cronStore,
+		CronCfg:           cronCfg,
 	}
 
 	// IntentsGuildMessageReactions is required for OnMessageReactionAdd
@@ -66,7 +70,7 @@ func NewAdapter(cfg config.DiscordConfig, pool *acp.SessionPool, transcriber stt
 	dg.AddHandler(h.OnInteractionCreate)
 	dg.AddHandler(h.OnMessageReactionAdd)
 
-	return &Adapter{session: dg}, nil
+	return &Adapter{session: dg, handler: h}, nil
 }
 
 func (a *Adapter) Start() error {
@@ -84,4 +88,10 @@ func (a *Adapter) Stop() error {
 // whether the initial handshake succeeded and the session hasn't been closed.
 func (a *Adapter) Healthy() bool {
 	return a.session.DataReady
+}
+
+// RegisterCron creates the discord cron Dispatcher and registers it
+// with the prefix "discord". Call after NewAdapter so a.session is set.
+func (a *Adapter) RegisterCron(registry *cronjob.Registry) {
+	registry.Register("discord", &CronDispatcher{Handler: a.handler, Session: a.session})
 }
