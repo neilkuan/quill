@@ -19,6 +19,7 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/config"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
@@ -43,7 +44,7 @@ type Adapter struct {
 	consecutiveErrors atomic.Int64
 }
 
-func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker) (*Adapter, error) {
+func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker, cronStore *cronjob.Store, cronCfg config.CronjobConfig) (*Adapter, error) {
 	allowed := make(map[int64]bool, len(cfg.AllowedChats))
 	for _, id := range cfg.AllowedChats {
 		allowed[id] = true
@@ -74,6 +75,8 @@ func NewAdapter(cfg config.TelegramConfig, pool *acp.SessionPool, transcriber st
 		TTSConfig:         ttsCfg,
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
 		Picker:            picker,
+		CronStore:         cronStore,
+		CronCfg:           cronCfg,
 	}
 
 	a := &Adapter{
@@ -252,4 +255,11 @@ func isTransientNetworkError(err error) bool {
 		return true
 	}
 	return false
+}
+
+// RegisterCron creates the per-platform cron Dispatcher and registers
+// it with the prefix "telegram" in the provided registry. Called by
+// main.go after the adapter has been constructed so a.b is non-nil.
+func (a *Adapter) RegisterCron(registry *cronjob.Registry) {
+	registry.Register("telegram", &CronDispatcher{Handler: a.handler, Bot: a.b})
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/command"
 	"github.com/neilkuan/quill/config"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/platform"
 	"github.com/neilkuan/quill/sessionpicker"
@@ -43,8 +44,10 @@ type Handler struct {
 	MarkdownTableMode markdown.TableMode
 	// Picker lists historical sessions for /pick. Nil when
 	// the configured agent backend is not recognised by sessionpicker.Detect.
-	Picker  sessionpicker.Picker
-	botUser *models.User
+	Picker    sessionpicker.Picker
+	CronStore *cronjob.Store
+	CronCfg   config.CronjobConfig
+	botUser   *models.User
 }
 
 func (h *Handler) handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -457,6 +460,9 @@ func (h *Handler) handleCommand(ctx context.Context, b *bot.Bot, chatID int64, t
 		return
 	case command.CmdHelp:
 		response = command.ExecuteHelp()
+	case command.CmdCron:
+		sessionKey := buildSessionKeyFromChat(chatID, threadID)
+		response = h.handleCronCommand(sessionKey, msg, cmd.Args)
 	default:
 		return
 	}
@@ -1274,4 +1280,66 @@ func (h *Handler) downloadFile(ctx context.Context, b *bot.Bot, fileID, filename
 	}
 
 	return localPath, nil
+}
+
+// handleCronCommand routes /cron <sub> <args> to the cronjob package
+// and returns the chat-friendly text response.
+func (h *Handler) handleCronCommand(threadKey string, msg *models.Message, args string) string {
+	if h.CronStore == nil || h.CronCfg.Disabled {
+		return "⚠️ Cron jobs are disabled on this bot."
+	}
+	sub, schedule, prompt, err := command.ParseCronArgs(args)
+	if err != nil {
+		return fmt.Sprintf("⚠️ %v\n\nUsage: `/cron add <schedule> <prompt>`, `/cron list`, `/cron rm <id>`", err)
+	}
+	tz, _ := time.LoadLocation(h.CronCfg.Timezone)
+	if tz == nil {
+		tz = time.UTC
+	}
+	minInterval := time.Duration(h.CronCfg.MinIntervalSeconds) * time.Second
+
+	switch sub {
+	case "add":
+		senderID := fmt.Sprintf("%d", msg.From.ID)
+		senderName := msg.From.Username
+		if senderName == "" {
+			senderName = msg.From.FirstName
+			if msg.From.LastName != "" {
+				senderName += " " + msg.From.LastName
+			}
+		}
+		_, replyMsg := command.ExecuteCronAdd(h.CronStore, threadKey,
+			senderID, senderName,
+			schedule, prompt,
+			h.CronCfg.MaxPerThread, minInterval, tz)
+		return replyMsg
+	case "list":
+		jobs := command.ListCronJobs(h.CronStore, threadKey)
+		return formatCronList(jobs, tz)
+	case "rm":
+		// schedule slot carries the id for rm
+		return command.ExecuteCronRemove(h.CronStore, threadKey, schedule)
+	}
+	return "⚠️ Unknown cron subcommand"
+}
+
+func formatCronList(jobs []cronjob.Job, tz *time.Location) string {
+	if len(jobs) == 0 {
+		return "📭 No scheduled prompts in this thread.\n\nCreate one with `/cron add <schedule> <prompt>`."
+	}
+	var sb strings.Builder
+	sb.WriteString("⏰ *Scheduled prompts in this thread*\n\n")
+	for _, j := range jobs {
+		sb.WriteString(fmt.Sprintf("`%s` — `%s` — next %s\n  → %s\n",
+			j.ID, j.Schedule, j.NextFire.In(tz).Format("2006-01-02 15:04 MST"),
+			truncate(j.Prompt, 80)))
+	}
+	return sb.String()
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
