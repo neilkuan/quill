@@ -31,6 +31,12 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 	// Plain text — Telegram's Markdown parser rejects ( ) ` * etc. without
 	// escaping, and the placeholder is informational so we lose nothing.
 	placeholder := fmt.Sprintf("🔔 cron %s (%s) — running prompt…", job.ID, job.Schedule)
+	if conn := d.Handler.Pool.Connection(job.ThreadKey); conn != nil && conn.Alive() {
+		if busy, owner := conn.IsBusy(); busy {
+			placeholder = fmt.Sprintf("🔔 cron %s (%s) — queued behind %s; will run when current prompt finishes.",
+				job.ID, job.Schedule, owner)
+		}
+	}
 	sent, err := d.Bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:          chatID,
 		MessageThreadID: threadID,
@@ -77,7 +83,7 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 	)
 	reactions.SetThinking()
 
-	finalText, cancelled, result := d.Handler.streamPrompt(ctx, d.Bot, job.ThreadKey, contentBlocks, chatID, sent.ID, threadID, reactions)
+	finalText, cancelled, result := d.Handler.streamPrompt(ctx, d.Bot, job.ThreadKey, contentBlocks, chatID, sent.ID, threadID, reactions, "cron "+job.ID)
 	switch {
 	case cancelled:
 		reactions.SetCancelled()

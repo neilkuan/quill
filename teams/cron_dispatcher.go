@@ -37,9 +37,16 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 		return fmt.Errorf("no cached serviceURL")
 	}
 
+	placeholderText := fmt.Sprintf("🔔 cron `%s` (`%s`) — running prompt…", job.ID, job.Schedule)
+	if conn := d.Handler.Pool.Connection(job.ThreadKey); conn != nil && conn.Alive() {
+		if busy, owner := conn.IsBusy(); busy {
+			placeholderText = fmt.Sprintf("🔔 cron `%s` (`%s`) — queued behind %s; will run when current prompt finishes.",
+				job.ID, job.Schedule, owner)
+		}
+	}
 	placeholder := &Activity{
 		Type:       "message",
-		Text:       fmt.Sprintf("🔔 cron `%s` (`%s`) — running prompt…", job.ID, job.Schedule),
+		Text:       placeholderText,
 		TextFormat: "markdown",
 	}
 	sent, err := d.Client.SendActivity(serviceURL, conversationID, placeholder)
@@ -72,7 +79,7 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 	}
 
 	contentBlocks := []acp.ContentBlock{acp.TextBlock(body)}
-	finalText, _, _ := d.Handler.streamPrompt(job.ThreadKey, contentBlocks, serviceURL, conversationID, sent.ID)
+	finalText, _, _ := d.Handler.streamPrompt(job.ThreadKey, contentBlocks, serviceURL, conversationID, sent.ID, "cron "+job.ID)
 	_ = finalText // streamPrompt has already updated the placeholder
 	return nil
 }

@@ -338,13 +338,31 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	thinkingMsg, err := s.ChannelMessageSend(threadID, "💭 _thinking..._")
+	threadKey := buildSessionKey(threadID)
+
+	// Owner descriptor for IsBusy / queued-placeholder rendering.
+	ownerDesc := "user"
+	if m.Author != nil {
+		if m.Member != nil && m.Member.Nick != "" {
+			ownerDesc = "user " + m.Member.Nick
+		} else if m.Author.Username != "" {
+			ownerDesc = "user @" + m.Author.Username
+		}
+	}
+
+	thinkingText := "💭 _thinking..._"
+	if conn := h.Pool.Connection(threadKey); conn != nil && conn.Alive() {
+		if busy, owner := conn.IsBusy(); busy {
+			thinkingText = fmt.Sprintf("⏳ _queued behind %s — agent is busy. Use /stop to cancel and run yours first._", owner)
+		}
+	}
+
+	thinkingMsg, err := s.ChannelMessageSend(threadID, thinkingText)
 	if err != nil {
 		slog.Error("failed to post", "error", err)
 		return
 	}
 
-	threadKey := buildSessionKey(threadID)
 	if err := h.Pool.GetOrCreate(threadKey); err != nil {
 		s.ChannelMessageEdit(threadID, thinkingMsg.ID, fmt.Sprintf("⚠️ Failed to start agent: %v", err))
 		slog.Error("pool error", "error", err)
@@ -377,7 +395,7 @@ func (h *Handler) OnMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		}
 	}
 
-	finalText, cancelled, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay)
+	finalText, cancelled, result := streamPrompt(h.Pool, threadKey, contentBlocks, s, threadID, thinkingMsg.ID, reactions, h.MarkdownTableMode, h.ReactionsConfig.ToolDisplay, ownerDesc)
 
 	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
@@ -1012,11 +1030,12 @@ func streamPrompt(
 	reactions *StatusReactionController,
 	tableMode markdown.TableMode,
 	toolDisplay string,
+	owner string,
 ) (string, bool, error) {
 	var finalText string
 	var cancelled bool
 	err := pool.WithConnection(threadKey, func(conn *acp.AcpConnection) error {
-		rx, _, reset, resumed, err := conn.SessionPrompt(content)
+		rx, _, reset, resumed, err := conn.SessionPrompt(content, owner)
 		if err != nil {
 			return err
 		}
@@ -1188,7 +1207,7 @@ func streamPrompt(
 			slog.Info("copilot auto-retry: switching model after reasoning_effort rejection",
 				"thread_key", conn.ThreadKey, "session_id", conn.SessionID,
 				"previous_model", current, "fallback_model", newModel)
-			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content)
+			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content, owner)
 			if promptErr2 != nil {
 				slog.Warn("copilot auto-retry: session_prompt failed",
 					"thread_key", conn.ThreadKey, "session_id", conn.SessionID,

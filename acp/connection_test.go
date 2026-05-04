@@ -40,6 +40,27 @@ func TestSpawnConnection_InvalidCommand(t *testing.T) {
 	}
 }
 
+func TestAcpConnection_IsBusy(t *testing.T) {
+	conn := &AcpConnection{}
+
+	// idle
+	if busy, owner := conn.IsBusy(); busy || owner != "" {
+		t.Errorf("idle conn: IsBusy=(%v,%q) want (false,\"\")", busy, owner)
+	}
+
+	// simulate SessionPrompt acquiring promptMu + setting owner
+	conn.setCurrentOwner("cron a3f5b201")
+	if busy, owner := conn.IsBusy(); !busy || owner != "cron a3f5b201" {
+		t.Errorf("busy conn: IsBusy=(%v,%q) want (true,\"cron a3f5b201\")", busy, owner)
+	}
+
+	// simulate PromptDone clearing
+	conn.setCurrentOwner("")
+	if busy, owner := conn.IsBusy(); busy || owner != "" {
+		t.Errorf("after clear: IsBusy=(%v,%q) want (false,\"\")", busy, owner)
+	}
+}
+
 func TestAcpConnection_DefaultFields(t *testing.T) {
 	// Verify that a freshly constructed AcpConnection has the expected defaults
 	// for the new session resume fields.

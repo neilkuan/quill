@@ -28,6 +28,12 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 	}
 
 	placeholder := fmt.Sprintf("🔔 cron `%s` (`%s`) — running prompt…", job.ID, job.Schedule)
+	if conn := d.Handler.Pool.Connection(job.ThreadKey); conn != nil && conn.Alive() {
+		if busy, owner := conn.IsBusy(); busy {
+			placeholder = fmt.Sprintf("🔔 cron `%s` (`%s`) — queued behind %s; will run when current prompt finishes.",
+				job.ID, job.Schedule, owner)
+		}
+	}
 	sent, err := d.Session.ChannelMessageSend(channelID, placeholder)
 	if err != nil {
 		return fmt.Errorf("send placeholder: %w", err)
@@ -77,6 +83,7 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 		reactions,
 		d.Handler.MarkdownTableMode,
 		d.Handler.ReactionsConfig.ToolDisplay,
+		"cron "+job.ID,
 	)
 	switch {
 	case cancelled:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -346,11 +347,31 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		"has_document", hasDocument || hasReplyDocument,
 	)
 
-	// Send initial "thinking" message as a reply
+	// Owner descriptor used both for the placeholder text and the
+	// later SessionPrompt call so /info-style introspection can name
+	// who is currently running on this connection.
+	ownerDesc := "user"
+	if msg.From != nil && msg.From.Username != "" {
+		ownerDesc = "user @" + msg.From.Username
+	} else if msg.From != nil && msg.From.FirstName != "" {
+		ownerDesc = "user " + msg.From.FirstName
+	}
+
+	// If the connection already has another prompt running (e.g. a
+	// long cron fire), tell the user up front instead of showing a
+	// silent "thinking…" they'll mistake for the bot dying.
+	thinkingText := "💭 <i>thinking…</i>"
+	if conn := h.Pool.Connection(sessionKey); conn != nil && conn.Alive() {
+		if busy, owner := conn.IsBusy(); busy {
+			thinkingText = fmt.Sprintf("⏳ <i>queued behind %s — agent is busy. Use /stop to cancel and run yours first.</i>", html.EscapeString(owner))
+		}
+	}
+
+	// Send initial "thinking" / "queued" message as a reply
 	sent, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:          chatID,
 		MessageThreadID: threadID,
-		Text:            "💭 <i>thinking…</i>",
+		Text:            thinkingText,
 		ParseMode:       models.ParseModeHTML,
 		ReplyParameters: &models.ReplyParameters{MessageID: msg.ID},
 	})
@@ -380,7 +401,7 @@ func (h *Handler) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	)
 	reactions.SetQueued()
 
-	finalText, cancelled, result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions)
+	finalText, cancelled, result := h.streamPrompt(ctx, b, sessionKey, contentBlocks, chatID, sent.ID, threadID, reactions, ownerDesc)
 
 	// Cleanup downloaded images and file attachments
 	for _, p := range imagePaths {
@@ -848,11 +869,12 @@ func (h *Handler) streamPrompt(
 	msgID int,
 	threadID int,
 	reactions *StatusReactionController,
+	owner string,
 ) (string, bool, error) {
 	var finalText string
 	var cancelled bool
 	err := h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
-		rx, _, reset, resumed, err := conn.SessionPrompt(content)
+		rx, _, reset, resumed, err := conn.SessionPrompt(content, owner)
 		if err != nil {
 			return err
 		}
@@ -1025,7 +1047,7 @@ func (h *Handler) streamPrompt(
 			slog.Info("copilot auto-retry: switching model after reasoning_effort rejection",
 				"thread_key", conn.ThreadKey, "session_id", conn.SessionID,
 				"previous_model", current, "fallback_model", newModel)
-			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content)
+			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content, owner)
 			if promptErr2 != nil {
 				slog.Warn("copilot auto-retry: session_prompt failed",
 					"thread_key", conn.ThreadKey, "session_id", conn.SessionID,

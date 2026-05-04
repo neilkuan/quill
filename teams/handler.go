@@ -224,13 +224,26 @@ func (h *Handler) OnMessage(activity *Activity) {
 
 	slog.Debug("processing", "prompt", promptWithSender, "images", len(imagePaths), "files", len(fileAttachments), "session_key", sessionKey)
 
-	// Send initial "thinking" message
+	// Owner descriptor for IsBusy / queued-placeholder rendering.
+	ownerDesc := "user"
+	if activity.From.Name != "" {
+		ownerDesc = "user " + activity.From.Name
+	}
+
+	thinkingText := "💭 _thinking..._"
+	if conn := h.Pool.Connection(sessionKey); conn != nil && conn.Alive() {
+		if busy, owner := conn.IsBusy(); busy {
+			thinkingText = fmt.Sprintf("⏳ _queued behind %s — agent is busy. Use /stop to cancel and run yours first._", owner)
+		}
+	}
+
+	// Send initial "thinking" / "queued" message
 	thinkingResp, err := h.sendActivity(
 		activity.ServiceURL,
 		conversationID,
 		&Activity{
 			Type:       "message",
-			Text:       "💭 _thinking..._",
+			Text:       thinkingText,
 			TextFormat: "markdown",
 		},
 	)
@@ -261,6 +274,7 @@ func (h *Handler) OnMessage(activity *Activity) {
 		activity.ServiceURL,
 		conversationID,
 		thinkingResp.ID,
+		ownerDesc,
 	)
 
 	// Cleanup downloaded images and file attachments
@@ -405,11 +419,12 @@ func (h *Handler) streamPrompt(
 	serviceURL string,
 	conversationID string,
 	msgID string,
+	owner string,
 ) (string, bool, error) {
 	var finalText string
 	var cancelled bool
 	err := h.Pool.WithConnection(sessionKey, func(conn *acp.AcpConnection) error {
-		rx, _, reset, resumed, err := conn.SessionPrompt(content)
+		rx, _, reset, resumed, err := conn.SessionPrompt(content, owner)
 		if err != nil {
 			return err
 		}
@@ -586,7 +601,7 @@ func (h *Handler) streamPrompt(
 			slog.Info("copilot auto-retry: switching model after reasoning_effort rejection",
 				"thread_key", conn.ThreadKey, "session_id", conn.SessionID,
 				"previous_model", current, "fallback_model", newModel)
-			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content)
+			newRx, _, _, _, promptErr2 := conn.SessionPrompt(content, owner)
 			if promptErr2 != nil {
 				slog.Warn("copilot auto-retry: session_prompt failed",
 					"thread_key", conn.ThreadKey, "session_id", conn.SessionID,

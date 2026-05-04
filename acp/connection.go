@@ -49,6 +49,35 @@ type AcpConnection struct {
 	modelMu         sync.RWMutex
 	AvailableModels []ModelInfo
 	CurrentModelID  string
+
+	// ownerMu guards currentOwner so handlers can peek at "who is
+	// holding promptMu right now" without acquiring promptMu itself.
+	// The owner string is set when SessionPrompt acquires promptMu
+	// and cleared by PromptDone before promptMu releases.
+	ownerMu      sync.RWMutex
+	currentOwner string // "" when idle; "user msg @neil" / "cron a3f5b201" etc when busy
+}
+
+// IsBusy returns whether the connection currently has a prompt running
+// and a human-readable description of who started it. Cheap; safe to
+// call from any goroutine. Used by message handlers to render a
+// "queued behind X" placeholder when a new prompt is about to wait on
+// promptMu.
+//
+// Note: there is a small window between SessionPrompt acquiring
+// promptMu and writing the owner field. During that window IsBusy
+// returns (false, ""). The worst-case effect on UX is a "thinking…"
+// placeholder briefly shown instead of "queued behind X" — benign.
+func (c *AcpConnection) IsBusy() (bool, string) {
+	c.ownerMu.RLock()
+	defer c.ownerMu.RUnlock()
+	return c.currentOwner != "", c.currentOwner
+}
+
+func (c *AcpConnection) setCurrentOwner(owner string) {
+	c.ownerMu.Lock()
+	c.currentOwner = owner
+	c.ownerMu.Unlock()
 }
 
 // Modes returns a copy of the session's currently advertised modes
@@ -593,8 +622,9 @@ func (c *AcpConnection) SessionSetModel(modelID string) error {
 // Only one prompt may be active at a time — concurrent callers block until PromptDone.
 // Returns the notification channel, request ID, whether this is a reset, whether
 // this is a resumed session, and any error.
-func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMessage, uint64, bool, bool, error) {
+func (c *AcpConnection) SessionPrompt(content []ContentBlock, owner string) (<-chan *JsonRpcMessage, uint64, bool, bool, error) {
 	c.promptMu.Lock() // released by PromptDone
+	c.setCurrentOwner(owner)
 
 	// Consume one-shot flags under promptMu to avoid races
 	reset := c.SessionReset
@@ -606,6 +636,7 @@ func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMe
 	c.MessageCount.Add(1)
 
 	if c.SessionID == "" {
+		c.setCurrentOwner("")
 		c.promptMu.Unlock()
 		return nil, 0, false, false, fmt.Errorf("no session")
 	}
@@ -622,6 +653,7 @@ func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMe
 	})
 	data, err := json.Marshal(req)
 	if err != nil {
+		c.setCurrentOwner("")
 		c.promptMu.Unlock()
 		return nil, 0, false, false, err
 	}
@@ -632,6 +664,7 @@ func (c *AcpConnection) SessionPrompt(content []ContentBlock) (<-chan *JsonRpcMe
 	c.pendingMu.Unlock()
 
 	if err := c.sendRaw(string(data)); err != nil {
+		c.setCurrentOwner("")
 		c.promptMu.Unlock()
 		return nil, 0, false, false, err
 	}
@@ -646,6 +679,7 @@ func (c *AcpConnection) PromptDone() {
 	c.notifyCh = nil
 	c.notifyMu.Unlock()
 	c.touchLastActive()
+	c.setCurrentOwner("")
 	c.promptMu.Unlock()
 }
 
