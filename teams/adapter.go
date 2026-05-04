@@ -12,6 +12,7 @@ import (
 
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/config"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/sessionpicker"
 	"github.com/neilkuan/quill/stt"
@@ -28,7 +29,7 @@ type Adapter struct {
 	listen     string
 }
 
-func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker) (*Adapter, error) {
+func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.Transcriber, synthesizer tts.Synthesizer, ttsCfg config.TTSConfig, mdCfg config.MarkdownConfig, picker sessionpicker.Picker, cronStore *cronjob.Store, cronCfg config.CronjobConfig) (*Adapter, error) {
 	auth := NewBotAuth(cfg.AppID, cfg.AppSecret, cfg.TenantID)
 	client := NewBotClient(auth)
 
@@ -65,6 +66,8 @@ func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.T
 		ToolDisplay:       toolDisplay,
 		Picker:            picker,
 		Mentions:          NewMentionDirectory(),
+		CronStore:         cronStore,
+		CronCfg:           cronCfg,
 	}
 
 	mux := buildMux(auth, handler)
@@ -114,6 +117,12 @@ func (a *Adapter) Stop() error {
 
 func (a *Adapter) Healthy() bool {
 	return a.healthy.Load()
+}
+
+// RegisterCron creates the teams cron Dispatcher and registers it
+// with the prefix "teams". Call after NewAdapter.
+func (a *Adapter) RegisterCron(registry *cronjob.Registry) {
+	registry.Register("teams", &CronDispatcher{Handler: a.handler, Client: a.client})
 }
 
 // buildMux creates the HTTP handler mux with JWT validation.

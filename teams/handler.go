@@ -17,6 +17,7 @@ import (
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/command"
 	"github.com/neilkuan/quill/config"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/markdown"
 	"github.com/neilkuan/quill/platform"
 	"github.com/neilkuan/quill/sessionpicker"
@@ -42,6 +43,8 @@ type Handler struct {
 	// <at>Name</at> output can be turned back into Bot Framework mention
 	// entities on outbound activities. Nil disables the feature.
 	Mentions *MentionDirectory
+	CronStore *cronjob.Store
+	CronCfg   config.CronjobConfig
 
 	// Per-conversation member-roster cache. The first message we see in
 	// a conversation triggers a background fetch of GET
@@ -50,6 +53,13 @@ type Handler struct {
 	// retry on the next message.
 	memberSeedingMu     sync.Mutex
 	seededConversations map[string]bool
+
+	// serviceURLs caches the most-recent serviceURL per conversationID.
+	// Populated by every incoming activity; read by CronDispatcher when
+	// firing a scheduled job. The cache survives the process lifetime
+	// only — after restart, conversations need a real activity to repopulate.
+	serviceURLMu sync.RWMutex
+	serviceURLs  map[string]string
 
 	// Test-only override hooks. When non-nil, replace the default
 	// dispatch so adapter-level routing tests don't have to spin up the
@@ -70,6 +80,8 @@ func (h *Handler) OnMessage(activity *Activity) {
 	if activity.From.ID == "" {
 		return
 	}
+
+	h.rememberServiceURL(activity.Conversation.ID, activity.ServiceURL)
 
 	slog.Debug("teams message received",
 		"conversation_id", activity.Conversation.ID,
@@ -363,6 +375,8 @@ func (h *Handler) handleCommand(activity *Activity, cmd *command.Command) {
 			break
 		}
 		response = command.ExecuteModel(h.Pool, sessionKey, cmd.Args)
+	case command.CmdCron:
+		response = h.handleCronCommand(activity, sessionKey, cmd.Args)
 	case command.CmdHelp:
 		response = command.ExecuteHelp()
 	default:
@@ -1100,4 +1114,85 @@ func (h *Handler) downloadAttachment(att Attachment, tmpDir string) (string, err
 			"path", filePath, "content_type", att.ContentType, "error", extErr)
 	}
 	return finalPath, nil
+}
+
+// rememberServiceURL caches the most-recent serviceURL for a
+// conversation. Idempotent and cheap; called on every incoming
+// activity that has both fields set.
+func (h *Handler) rememberServiceURL(conversationID, serviceURL string) {
+	if conversationID == "" || serviceURL == "" {
+		return
+	}
+	h.serviceURLMu.Lock()
+	defer h.serviceURLMu.Unlock()
+	if h.serviceURLs == nil {
+		h.serviceURLs = make(map[string]string)
+	}
+	h.serviceURLs[conversationID] = serviceURL
+}
+
+// ServiceURLFor returns the cached serviceURL for a conversation,
+// or "" if none has been seen yet.
+func (h *Handler) ServiceURLFor(conversationID string) string {
+	h.serviceURLMu.RLock()
+	defer h.serviceURLMu.RUnlock()
+	return h.serviceURLs[conversationID]
+}
+
+// handleCronCommand routes /cron <sub> <args> to the cronjob package.
+// Captures the activity's serviceURL into the cache so future cron
+// fires know where to post.
+func (h *Handler) handleCronCommand(activity *Activity, threadKey, args string) string {
+	if h.CronStore == nil || h.CronCfg.Disabled {
+		return "⚠️ Cron jobs are disabled on this bot."
+	}
+	// Make sure we know the serviceURL for this conversation (idempotent).
+	h.rememberServiceURL(activity.Conversation.ID, activity.ServiceURL)
+
+	sub, schedule, prompt, err := command.ParseCronArgs(args)
+	if err != nil {
+		return fmt.Sprintf("⚠️ %v\n\nUsage: `/cron add <schedule> <prompt>`, `/cron list`, `/cron rm <id>`", err)
+	}
+	tz, _ := time.LoadLocation(h.CronCfg.Timezone)
+	if tz == nil {
+		tz = time.UTC
+	}
+	minInterval := time.Duration(h.CronCfg.MinIntervalSeconds) * time.Second
+
+	switch sub {
+	case "add":
+		senderID := activity.From.AADObjectID
+		if senderID == "" {
+			senderID = activity.From.ID
+		}
+		_, replyMsg := command.ExecuteCronAdd(h.CronStore, threadKey,
+			senderID, activity.From.Name,
+			schedule, prompt,
+			h.CronCfg.MaxPerThread, minInterval, tz)
+		return replyMsg
+	case "list":
+		jobs := command.ListCronJobs(h.CronStore, threadKey)
+		return formatTeamsCronList(jobs, tz)
+	case "rm":
+		return command.ExecuteCronRemove(h.CronStore, threadKey, schedule)
+	}
+	return "⚠️ Unknown cron subcommand"
+}
+
+func formatTeamsCronList(jobs []cronjob.Job, tz *time.Location) string {
+	if len(jobs) == 0 {
+		return "📭 No scheduled prompts in this channel.\n\nCreate one with `/cron add <schedule> <prompt>`."
+	}
+	var sb strings.Builder
+	sb.WriteString("⏰ **Scheduled prompts in this channel**\n\n")
+	for _, j := range jobs {
+		body := j.Prompt
+		if len(body) > 80 {
+			body = body[:79] + "…"
+		}
+		sb.WriteString(fmt.Sprintf("`%s` — `%s` — next %s\n  → %s\n",
+			j.ID, j.Schedule, j.NextFire.In(tz).Format("2006-01-02 15:04 MST"),
+			body))
+	}
+	return sb.String()
 }

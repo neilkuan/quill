@@ -184,7 +184,7 @@ func main() {
 	}
 
 	if cfg.Teams.Enabled {
-		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown, picker)
+		adapter, err := teams.NewAdapter(cfg.Teams, pool, t, synth, cfg.TTS, cfg.Markdown, picker, nil, cfg.Cronjob)
 		if err != nil {
 			slog.Error("failed to create teams adapter", "error", err)
 			os.Exit(1)
