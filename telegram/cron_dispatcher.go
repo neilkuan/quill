@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"github.com/neilkuan/quill/acp"
 	"github.com/neilkuan/quill/cronjob"
 )
@@ -29,12 +28,13 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 		return fmt.Errorf("telegram cron: %w", err)
 	}
 
-	placeholder := fmt.Sprintf("🔔 cron `%s` (`%s`) — running prompt…", job.ID, job.Schedule)
+	// Plain text — Telegram's Markdown parser rejects ( ) ` * etc. without
+	// escaping, and the placeholder is informational so we lose nothing.
+	placeholder := fmt.Sprintf("🔔 cron %s (%s) — running prompt…", job.ID, job.Schedule)
 	sent, err := d.Bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:          chatID,
 		MessageThreadID: threadID,
 		Text:            placeholder,
-		ParseMode:       models.ParseModeMarkdown,
 	})
 	if err != nil {
 		return fmt.Errorf("send placeholder: %w", err)
@@ -62,7 +62,7 @@ func (d *CronDispatcher) Fire(ctx context.Context, job cronjob.Job) error {
 
 	// Ensure the connection exists.
 	if err := d.Handler.Pool.GetOrCreate(job.ThreadKey); err != nil {
-		d.editText(ctx, chatID, sent.ID, fmt.Sprintf("⚠️ cron `%s` failed: %v", job.ID, err))
+		d.editText(ctx, chatID, sent.ID, fmt.Sprintf("⚠️ cron %s failed: %v", job.ID, err))
 		return err
 	}
 
@@ -101,8 +101,7 @@ func (d *CronDispatcher) NotifyDropped(ctx context.Context, job cronjob.Job) {
 	_, err = d.Bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:          chatID,
 		MessageThreadID: threadID,
-		Text:            fmt.Sprintf("⚠️ cron `%s` dropped: thread queue full", job.ID),
-		ParseMode:       models.ParseModeMarkdown,
+		Text:            fmt.Sprintf("⚠️ cron %s dropped: thread queue full", job.ID),
 	})
 	if err != nil {
 		slog.Warn("cron dropped notify: send failed", "error", err)
