@@ -100,6 +100,77 @@ func TestBotClient_UpdateActivity(t *testing.T) {
 	}
 }
 
+func TestBotClient_GetConversationMembers(t *testing.T) {
+	var path, method, auth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		auth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[
+            {"id":"29:1-paul","name":"Paul Tung","givenName":"Paul","aadObjectId":"guid-paul"},
+            {"id":"29:1-neil","name":"Neil Kuan","aadObjectId":"guid-neil"}
+        ]`))
+	}))
+	defer ts.Close()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "mock-token",
+			"expires_in":   3600,
+		})
+	}))
+	defer tokenServer.Close()
+
+	client := NewBotClient(&BotAuth{appID: "a", appSecret: "s", tenantID: "t", tokenURL: tokenServer.URL})
+
+	members, err := client.GetConversationMembers(ts.URL, "19:abc@thread.tacv2")
+	if err != nil {
+		t.Fatalf("GetConversationMembers: %v", err)
+	}
+
+	if method != http.MethodGet {
+		t.Errorf("method = %s, want GET", method)
+	}
+	if path != "/v3/conversations/19:abc@thread.tacv2/members" {
+		t.Errorf("path = %s", path)
+	}
+	if auth != "Bearer mock-token" {
+		t.Errorf("auth = %s", auth)
+	}
+	if len(members) != 2 {
+		t.Fatalf("members len = %d, want 2", len(members))
+	}
+	if members[0].ID != "29:1-paul" || members[0].Name != "Paul Tung" || members[0].AADObjectID != "guid-paul" {
+		t.Errorf("members[0] = %+v", members[0])
+	}
+	if members[1].ID != "29:1-neil" {
+		t.Errorf("members[1] = %+v", members[1])
+	}
+}
+
+func TestBotClient_GetConversationMembers_HTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+	}))
+	defer ts.Close()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "mock-token",
+			"expires_in":   3600,
+		})
+	}))
+	defer tokenServer.Close()
+
+	client := NewBotClient(&BotAuth{appID: "a", appSecret: "s", tenantID: "t", tokenURL: tokenServer.URL})
+	if _, err := client.GetConversationMembers(ts.URL, "conv-id"); err == nil {
+		t.Errorf("expected error on 403, got nil")
+	}
+}
+
 func TestBotClient_SendTyping(t *testing.T) {
 	var receivedActivity Activity
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
