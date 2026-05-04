@@ -49,3 +49,8 @@ type Job struct {
 // Parsed returns the runtime Schedule object for this job, or nil if
 // the job was loaded but the schedule string failed to parse.
 func (j *Job) Parsed() Schedule { return j.parsed }
+
+// SetParsed records the runtime Schedule for this job. Used by Store
+// when adding a freshly parsed job so the scheduler can see it
+// immediately without waiting for the next Open().
+func (j *Job) SetParsed(s Schedule) { j.parsed = s }

@@ -77,7 +77,7 @@ func TestExecuteHelp_ListsEverySupportedCommand(t *testing.T) {
 	out := ExecuteHelp()
 	for _, name := range []string{
 		CmdSessions, CmdInfo, CmdReset, CmdResume, CmdStop,
-		CmdPicker, CmdMode, CmdModel, CmdHelp,
+		CmdPicker, CmdMode, CmdModel, CmdCron, CmdHelp,
 	} {
 		if !strings.Contains(out, "`"+name+"`") {
 			t.Errorf("ExecuteHelp output is missing command %q\n%s", name, out)
@@ -409,5 +409,81 @@ func TestFormatDuration(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
 		}
+	}
+}
+
+func TestParseCommandCronAdd(t *testing.T) {
+	cmd, ok := ParseCommand("cron add 0 9 * * * daily standup")
+	if !ok || cmd.Name != CmdCron {
+		t.Fatalf("ParseCommand returned ok=%v cmd=%+v", ok, cmd)
+	}
+	if cmd.Args == "" {
+		t.Error("expected args to be populated")
+	}
+}
+
+func TestParseCronAddArgs(t *testing.T) {
+	args := "add 0 9 * * * daily standup"
+	sub, schedule, prompt, err := ParseCronArgs(args)
+	if err != nil {
+		t.Fatalf("ParseCronArgs: %v", err)
+	}
+	if sub != "add" {
+		t.Errorf("sub=%q", sub)
+	}
+	if schedule != "0 9 * * *" {
+		t.Errorf("schedule=%q", schedule)
+	}
+	if prompt != "daily standup" {
+		t.Errorf("prompt=%q", prompt)
+	}
+}
+
+func TestParseCronAddArgsEvery(t *testing.T) {
+	_, schedule, prompt, err := ParseCronArgs("add every 5m ping the build")
+	if err != nil {
+		t.Fatalf("ParseCronArgs: %v", err)
+	}
+	if schedule != "every 5m" {
+		t.Errorf("schedule=%q want 'every 5m'", schedule)
+	}
+	if prompt != "ping the build" {
+		t.Errorf("prompt=%q", prompt)
+	}
+}
+
+func TestParseCronAddArgsAtAbsolute(t *testing.T) {
+	_, schedule, prompt, err := ParseCronArgs("add at 2026-05-05 09:00 launch deploy")
+	if err != nil {
+		t.Fatalf("ParseCronArgs: %v", err)
+	}
+	if schedule != "at 2026-05-05 09:00" {
+		t.Errorf("schedule=%q", schedule)
+	}
+	if prompt != "launch deploy" {
+		t.Errorf("prompt=%q", prompt)
+	}
+}
+
+func TestParseCronListEmpty(t *testing.T) {
+	sub, schedule, prompt, err := ParseCronArgs("list")
+	if err != nil {
+		t.Fatalf("ParseCronArgs: %v", err)
+	}
+	if sub != "list" || schedule != "" || prompt != "" {
+		t.Errorf("got sub=%q schedule=%q prompt=%q", sub, schedule, prompt)
+	}
+}
+
+func TestParseCronRm(t *testing.T) {
+	sub, schedule, _, err := ParseCronArgs("rm abc12345")
+	if err != nil {
+		t.Fatalf("ParseCronArgs: %v", err)
+	}
+	if sub != "rm" {
+		t.Errorf("sub=%q", sub)
+	}
+	if schedule != "abc12345" {
+		t.Errorf("expected id in schedule slot, got %q", schedule)
 	}
 }

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/neilkuan/quill/acp"
+	"github.com/neilkuan/quill/cronjob"
 	"github.com/neilkuan/quill/sessionpicker"
 )
 
@@ -21,6 +23,7 @@ const (
 	CmdMode     = "mode"
 	CmdModel    = "model"
 	CmdHelp     = "help"
+	CmdCron     = "cron"
 )
 
 type Command struct {
@@ -56,7 +59,7 @@ func ParseCommand(text string) (*Command, bool) {
 		name = CmdHelp
 	}
 	known := map[string]bool{
-		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true, CmdPicker: true, CmdMode: true, CmdModel: true, CmdHelp: true,
+		CmdSessions: true, CmdReset: true, CmdResume: true, CmdInfo: true, CmdStop: true, CmdPicker: true, CmdMode: true, CmdModel: true, CmdHelp: true, CmdCron: true,
 	}
 	if !known[name] {
 		return nil, false
@@ -89,6 +92,7 @@ func ExecuteHelp() string {
 	sb.WriteString("| `pick` | Browse and resume historical sessions on disk |\n")
 	sb.WriteString("| `mode` | List or switch the session's agent mode (e.g. `mode <id>`) |\n")
 	sb.WriteString("| `model` | List or switch the session's LLM model (e.g. `model <id>`) |\n")
+	sb.WriteString("| `cron` | Schedule or manage recurring prompts (`add <schedule> <prompt>` / `list` / `rm <id>`) |\n")
 	sb.WriteString("| `help` (or `?`) | Show this message |\n")
 	return sb.String()
 }
@@ -692,4 +696,158 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", h)
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// ParseCronArgs splits the tail of "/cron <sub> <rest>" into a
+// subcommand, a schedule expression, and a prompt body. The schedule
+// token-count varies by form:
+//
+//   - "0 9 * * *" — 5 tokens
+//   - "every 5m"  — 2 tokens
+//   - "in 30m"    — 2 tokens
+//   - "at HH:MM"  — 2 tokens
+//   - "at YYYY-MM-DD HH:MM" — 3 tokens
+//
+// Schedule tokens are not parsed for validity here — that is the
+// responsibility of cronjob.ParseSchedule. We only need to know how
+// many tokens to consume so the rest can be treated as the prompt body.
+func ParseCronArgs(args string) (sub, schedule, prompt string, err error) {
+	parts := strings.Fields(strings.TrimSpace(args))
+	if len(parts) == 0 {
+		return "", "", "", fmt.Errorf("missing subcommand (try 'add', 'list', or 'rm')")
+	}
+	sub = strings.ToLower(parts[0])
+
+	switch sub {
+	case "list":
+		if len(parts) > 1 {
+			return "", "", "", fmt.Errorf("'list' takes no arguments")
+		}
+		return sub, "", "", nil
+
+	case "rm", "remove", "delete":
+		sub = "rm"
+		if len(parts) < 2 {
+			return "", "", "", fmt.Errorf("'rm' needs an id (try '/cron list' to see ids)")
+		}
+		return sub, parts[1], "", nil
+
+	case "add":
+		if len(parts) < 3 {
+			return "", "", "", fmt.Errorf("'add' needs <schedule> <prompt>")
+		}
+		// Determine schedule token count.
+		head := strings.ToLower(parts[1])
+		var n int
+		switch head {
+		case "every", "in":
+			n = 2
+		case "at":
+			// "at HH:MM" or "at YYYY-MM-DD HH:MM"
+			if len(parts) >= 4 && looksLikeDate(parts[2]) {
+				n = 3
+			} else {
+				n = 2
+			}
+		default:
+			// Cron expression — 5 fields.
+			if len(parts) < 7 {
+				return "", "", "", fmt.Errorf("cron expressions take 5 fields followed by the prompt")
+			}
+			n = 5
+		}
+		if len(parts) < n+2 {
+			return "", "", "", fmt.Errorf("missing prompt body after schedule")
+		}
+		schedule = strings.Join(parts[1:1+n], " ")
+		prompt = strings.Join(parts[1+n:], " ")
+		return sub, schedule, prompt, nil
+
+	default:
+		return "", "", "", fmt.Errorf("unknown subcommand %q (try 'add', 'list', or 'rm')", sub)
+	}
+}
+
+func looksLikeDate(s string) bool {
+	// YYYY-MM-DD shape check; lightweight, no regex.
+	if len(s) != 10 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 4, 7:
+			if r != '-' {
+				return false
+			}
+		default:
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ListCronJobs returns the jobs in the given thread.
+func ListCronJobs(store *cronjob.Store, threadKey string) []cronjob.Job {
+	if store == nil {
+		return nil
+	}
+	return store.List(threadKey)
+}
+
+// ExecuteCronAdd validates the schedule, persists the job, and
+// returns a human-readable confirmation. cfg is read for
+// MinIntervalSeconds, Timezone, MaxPerThread.
+func ExecuteCronAdd(store *cronjob.Store, threadKey, senderID, senderName, scheduleExpr, prompt string,
+	maxPerThread int, minInterval time.Duration, tz *time.Location) (cronjob.Job, string) {
+
+	if store == nil {
+		return cronjob.Job{}, "⚠️ Cron jobs are disabled on this bot."
+	}
+	now := time.Now().UTC()
+
+	sch, kind, err := cronjob.ParseSchedule(scheduleExpr, tz, minInterval, now)
+	if err != nil {
+		return cronjob.Job{}, fmt.Sprintf("⚠️ %s", err.Error())
+	}
+
+	next := sch.Next(now)
+	if next.IsZero() {
+		return cronjob.Job{}, "⚠️ Schedule has no future fire time."
+	}
+
+	job := cronjob.Job{
+		ThreadKey:  threadKey,
+		SenderID:   senderID,
+		SenderName: senderName,
+		Schedule:   scheduleExpr,
+		Kind:       kind,
+		Prompt:     prompt,
+		NextFire:   next,
+		CreatedAt:  now,
+	}
+	// Hydrate parsed schedule for the runtime path before persisting.
+	hydrated := job
+	hydrated.SetParsed(sch)
+
+	added, err := store.Add(hydrated, maxPerThread)
+	if err != nil {
+		if errors.Is(err, cronjob.ErrLimitReached) {
+			return cronjob.Job{}, fmt.Sprintf("⚠️ This thread already has %d scheduled prompts (the limit). Remove one first with `/cron rm <id>`.", maxPerThread)
+		}
+		return cronjob.Job{}, fmt.Sprintf("⚠️ Failed to save cron job: %v", err)
+	}
+	return added, fmt.Sprintf("✅ Created cron `%s` — next fire %s", added.ID, next.In(tz).Format("2006-01-02 15:04 MST"))
+}
+
+// ExecuteCronRemove deletes a job by id; returns chat-friendly text.
+func ExecuteCronRemove(store *cronjob.Store, threadKey, id string) string {
+	if store == nil {
+		return "⚠️ Cron jobs are disabled on this bot."
+	}
+	if err := store.Remove(threadKey, id); err != nil {
+		return fmt.Sprintf("⚠️ %v", err)
+	}
+	return fmt.Sprintf("🗑️ Removed cron `%s`.", id)
 }
