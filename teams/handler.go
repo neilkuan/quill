@@ -43,6 +43,14 @@ type Handler struct {
 	// entities on outbound activities. Nil disables the feature.
 	Mentions *MentionDirectory
 
+	// Per-conversation member-roster cache. The first message we see in
+	// a conversation triggers a background fetch of GET
+	// /v3/conversations/{id}/members so the bot can @ members who
+	// haven't spoken yet. Failed fetches clear their slot to allow a
+	// retry on the next message.
+	memberSeedingMu     sync.Mutex
+	seededConversations map[string]bool
+
 	// Test-only override hooks. When non-nil, replace the default
 	// dispatch so adapter-level routing tests don't have to spin up the
 	// full message pipeline.
@@ -80,6 +88,9 @@ func (h *Handler) OnMessage(activity *Activity) {
 	// messages that fail later command parsing teach us about users.
 	h.Mentions.Record(activity.From)
 	h.Mentions.RecordEntities(activity.Entities)
+	// Once per conversation, fetch the full member roster in the
+	// background so the bot can @ users who haven't spoken yet.
+	h.seedMembersAsync(activity.ServiceURL, activity.Conversation.ID)
 
 	conversationID := activity.Conversation.ID
 	userID := activity.From.ID
@@ -708,6 +719,54 @@ func (h *Handler) buildVoiceInfo() *command.VoiceInfo {
 		vi.STTProvider = "openai"
 	}
 	return vi
+}
+
+// seedMembersAsync triggers a one-shot background load of a
+// conversation's full member roster into the mention directory. Runs
+// at most once per conversation per process lifetime; on failure the
+// flag is cleared so the next inbound message can retry. Returns
+// immediately — the directory is populated asynchronously, so the very
+// first outbound reply right after a cold start may still miss
+// previously-silent users.
+func (h *Handler) seedMembersAsync(serviceURL, conversationID string) {
+	if h.Mentions == nil || h.Client == nil {
+		return
+	}
+	if serviceURL == "" || conversationID == "" {
+		return
+	}
+
+	h.memberSeedingMu.Lock()
+	if h.seededConversations == nil {
+		h.seededConversations = make(map[string]bool)
+	}
+	if h.seededConversations[conversationID] {
+		h.memberSeedingMu.Unlock()
+		return
+	}
+	h.seededConversations[conversationID] = true
+	h.memberSeedingMu.Unlock()
+
+	go func() {
+		members, err := h.Client.GetConversationMembers(serviceURL, conversationID)
+		if err != nil {
+			slog.Warn("teams: failed to seed mention directory from conversation roster",
+				"conversation_id", conversationID, "error", err)
+			h.memberSeedingMu.Lock()
+			delete(h.seededConversations, conversationID)
+			h.memberSeedingMu.Unlock()
+			return
+		}
+		for _, m := range members {
+			h.Mentions.Record(Account{
+				ID:          m.ID,
+				Name:        m.Name,
+				AADObjectID: m.AADObjectID,
+			})
+		}
+		slog.Info("teams: seeded mention directory from conversation roster",
+			"conversation_id", conversationID, "members", len(members))
+	}()
 }
 
 // applyMentions populates `a.Entities` with Bot Framework mention

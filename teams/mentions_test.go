@@ -1,9 +1,14 @@
 package teams
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMentionDirectory_RecordAndResolve(t *testing.T) {
@@ -211,4 +216,122 @@ func TestApplyMentionsNilHandlerOrActivity(t *testing.T) {
 
 	h2 := &Handler{Mentions: NewMentionDirectory()}
 	h2.applyMentions(nil) // must not panic
+}
+
+// newMockBotClient stands up two httptest servers — one for the
+// Microsoft token endpoint, one for the Bot Framework REST API — and
+// returns a BotClient wired to both. The handler argument runs against
+// the API server (token requests are handled internally).
+func newMockBotClient(t *testing.T, handler http.HandlerFunc) (*BotClient, *httptest.Server, func()) {
+	t.Helper()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "mock-token",
+			"expires_in":   3600,
+		})
+	}))
+	apiServer := httptest.NewServer(handler)
+	client := NewBotClient(&BotAuth{appID: "a", appSecret: "s", tenantID: "t", tokenURL: tokenServer.URL})
+	return client, apiServer, func() {
+		apiServer.Close()
+		tokenServer.Close()
+	}
+}
+
+func TestSeedMembersAsync_RecordsAllMembers(t *testing.T) {
+	var calls atomic.Int32
+	client, ts, cleanup := newMockBotClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if want := "/v3/conversations/19:abc@thread.tacv2/members"; r.URL.Path != want {
+			t.Errorf("path = %s, want %s", r.URL.Path, want)
+		}
+		_, _ = w.Write([]byte(`[
+            {"id":"29:1-paul","name":"Paul Tung","aadObjectId":"guid-paul"},
+            {"id":"29:1-neil","name":"Neil Kuan"}
+        ]`))
+	})
+	defer cleanup()
+
+	h := &Handler{Client: client, Mentions: NewMentionDirectory()}
+	h.seedMembersAsync(ts.URL, "19:abc@thread.tacv2")
+
+	// Wait up to 1 second for the goroutine to finish populating the
+	// directory. Polls every 10ms so the test stays fast under load.
+	if !waitForCondition(t, time.Second, func() bool {
+		_, ok := h.Mentions.Resolve("Paul Tung")
+		return ok
+	}) {
+		t.Fatalf("Paul Tung never resolved after seeding")
+	}
+	if _, ok := h.Mentions.Resolve("Neil Kuan"); !ok {
+		t.Errorf("Neil Kuan should also be resolvable after seeding")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("API calls = %d, want 1", got)
+	}
+
+	// Second call for the same conversation must not refetch.
+	h.seedMembersAsync(ts.URL, "19:abc@thread.tacv2")
+	time.Sleep(50 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("API calls after second seed = %d, want 1 (cached)", got)
+	}
+}
+
+func TestSeedMembersAsync_FailureClearsCacheToAllowRetry(t *testing.T) {
+	var calls atomic.Int32
+	client, ts, cleanup := newMockBotClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":"29:1-paul","name":"Paul Tung"}]`))
+	})
+	defer cleanup()
+
+	h := &Handler{Client: client, Mentions: NewMentionDirectory()}
+
+	h.seedMembersAsync(ts.URL, "conv-1")
+	if !waitForCondition(t, time.Second, func() bool { return calls.Load() == 1 }) {
+		t.Fatalf("first call never landed")
+	}
+	// Wait for the failure goroutine to delete the seeded flag.
+	time.Sleep(50 * time.Millisecond)
+
+	// Retry should hit the API again — proving the failure cleared the cache.
+	h.seedMembersAsync(ts.URL, "conv-1")
+	if !waitForCondition(t, time.Second, func() bool { return calls.Load() == 2 }) {
+		t.Fatalf("retry after failure never reached the API; calls=%d", calls.Load())
+	}
+	if !waitForCondition(t, time.Second, func() bool {
+		_, ok := h.Mentions.Resolve("Paul Tung")
+		return ok
+	}) {
+		t.Fatalf("Paul Tung should resolve after retry succeeds")
+	}
+}
+
+func TestSeedMembersAsync_NoOpWithoutPrereqs(t *testing.T) {
+	// Nil mentions / nil client / empty IDs must all return without panicking
+	// and without scheduling any work that could touch the network.
+	(&Handler{Client: nil, Mentions: NewMentionDirectory()}).seedMembersAsync("https://x", "c")
+	(&Handler{Client: &BotClient{}, Mentions: nil}).seedMembersAsync("https://x", "c")
+	(&Handler{Client: &BotClient{}, Mentions: NewMentionDirectory()}).seedMembersAsync("", "c")
+	(&Handler{Client: &BotClient{}, Mentions: NewMentionDirectory()}).seedMembersAsync("https://x", "")
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return cond()
 }
