@@ -64,6 +64,7 @@ func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.T
 		MarkdownTableMode: markdown.ParseMode(mdCfg.Tables),
 		ToolDisplay:       toolDisplay,
 		Picker:            picker,
+		Mentions:          NewMentionDirectory(),
 	}
 
 	mux := buildMux(auth, handler)
