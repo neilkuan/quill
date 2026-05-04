@@ -54,3 +54,28 @@ func TestIntervalScheduleZeroRejected(t *testing.T) {
 		t.Error("expected error for zero interval")
 	}
 }
+
+func TestOneshotScheduleBeforeFire(t *testing.T) {
+	at := mustTime(t, "2026-05-04T15:00:00Z")
+	s := newOneshotSchedule(at)
+	if s.Kind() != KindOneshot {
+		t.Errorf("Kind=%q want %q", s.Kind(), KindOneshot)
+	}
+	got := s.Next(mustTime(t, "2026-05-04T14:00:00Z"))
+	if !got.Equal(at) {
+		t.Errorf("Next before fire=%v want %v", got, at)
+	}
+}
+
+func TestOneshotScheduleAfterFire(t *testing.T) {
+	at := mustTime(t, "2026-05-04T15:00:00Z")
+	s := newOneshotSchedule(at)
+	got := s.Next(mustTime(t, "2026-05-04T15:00:00Z"))
+	if !got.IsZero() {
+		t.Errorf("Next at/after fire should be zero, got %v", got)
+	}
+	got2 := s.Next(mustTime(t, "2026-05-04T15:01:00Z"))
+	if !got2.IsZero() {
+		t.Errorf("Next after fire should be zero, got %v", got2)
+	}
+}

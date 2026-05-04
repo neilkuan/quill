@@ -49,3 +49,24 @@ func (i *intervalSchedule) Kind() Kind { return KindInterval }
 func (i *intervalSchedule) Next(after time.Time) time.Time {
 	return after.UTC().Add(i.d)
 }
+
+type oneshotSchedule struct {
+	at time.Time
+}
+
+func newOneshotSchedule(at time.Time) *oneshotSchedule {
+	return &oneshotSchedule{at: at.UTC()}
+}
+
+func (o *oneshotSchedule) Kind() Kind { return KindOneshot }
+
+// Next returns o.at the first time it is asked, but the zero time
+// once `after` has reached or passed o.at — signalling to the
+// scheduler that the job has fired and should be deleted from the
+// store.
+func (o *oneshotSchedule) Next(after time.Time) time.Time {
+	if !after.UTC().Before(o.at) {
+		return time.Time{}
+	}
+	return o.at
+}
