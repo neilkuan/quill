@@ -77,9 +77,17 @@ Node-based agents) holds the agent's session state on disk:
 - Codex: `~/.codex/history.jsonl`
 - Copilot: `~/.copilot/session-state/<uuid>/...`
 
+The same directory also stores Quill's own state under `.quill/`:
+
+- `cronjobs.json` — user-scheduled `/cron` jobs
+- `teams-serviceurls.json` — per-conversation Bot Framework `serviceURL`s
+  needed for cron-fired proactive Teams messages to find their destination
+  after a restart
+
 By default, `agent.workingDir` is an `emptyDir` volume — it is wiped on every
-pod restart, so `/pick` returns nothing and users lose the ability to resume
-prior conversations across image upgrades.
+pod restart, so `/pick` returns nothing, scheduled `/cron` jobs are forgotten,
+and Teams cron fires log `no cached serviceURL` until each user pings the bot
+again.
 
 The chart can opt-in to an S3-backed backup that:
 

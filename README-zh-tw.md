@@ -352,7 +352,7 @@ listen = ":8080"
 - **沒有執行歷史** — 觸發紀錄只能從 `slog` 看；可查詢的歷史是 V2 工作。
 - **Best-effort 投遞** — bot 在預定時間離線的話，那次觸發**會丟失**（重啟後不會補打 missed fire）。
 - **單一 instance 假設** — 兩個 Quill 程序共用同一個 `cronjobs.json` 會雙觸發。每個 store 只跑一個 instance。
-- **Teams `serviceURL` 快取** — Teams 的 Bot Framework 每次發送都需要 `serviceURL`，Quill 把每個 conversation 最近一次的 `serviceURL` 存在記憶體。process 重啟後，使用者要在該 conversation 發任一則訊息把 cache 重新建立起來，cron 才能 post 訊息。
+- **Teams `serviceURL` 快取** — Teams 的 Bot Framework 每次發送都需要 `serviceURL`，Quill 把每個 conversation 最近一次的 `serviceURL` 持久化到 `./.quill/teams-serviceurls.json`（可用 `teams.service_url_store_path` 改路徑；設成空字串則退回純記憶體模式），process／pod 重啟後 cron 立刻可以 post，不用使用者重新發訊息。在 Kubernetes 上這個檔案落在 `agent.workingDir`，所以 Helm chart 開 `backup.enabled=true` 時會跟 `cronjobs.json` 一起 sync 到 S3。
 
 ---
 

@@ -337,7 +337,7 @@ Users can schedule prompts to fire automatically into their chat. Each fire goes
 - **No execution history** — cron fires are visible in `slog`; queryable history is V2.
 - **Best-effort delivery** — if the bot is offline when a fire is due, that fire is **lost** (the scheduler does not catch up missed fires on startup).
 - **Single instance only** — two Quill processes sharing the same `cronjobs.json` will both fire every job. Run a single instance per store.
-- **Teams `serviceURL` cache** — Teams' Bot Framework requires a `serviceURL` per send. Quill caches the most-recent `serviceURL` per conversation in memory. After a process restart, the user must send any message in the conversation to repopulate the cache before cron fires can post.
+- **Teams `serviceURL` cache** — Teams' Bot Framework requires a `serviceURL` per send. Quill caches the most-recent `serviceURL` per conversation and persists it to `./.quill/teams-serviceurls.json` (configurable via `teams.service_url_store_path`; set empty to opt out and fall back to in-memory only), so cron fires keep posting across process / pod restarts without waiting for the user to send a fresh message. On Kubernetes the file lives in `agent.workingDir`, so `backup.enabled=true` in the Helm chart syncs it to S3 alongside `cronjobs.json`.
 
 ---
 
