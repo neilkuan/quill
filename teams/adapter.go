@@ -33,6 +33,15 @@ func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.T
 	auth := NewBotAuth(cfg.AppID, cfg.AppSecret, cfg.TenantID)
 	client := NewBotClient(auth)
 
+	serviceURLStore, err := OpenServiceURLStore(cfg.ServiceURLStorePath)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.ServiceURLStorePath != "" {
+		slog.Info("teams serviceURL store opened",
+			"path", cfg.ServiceURLStorePath, "cached", serviceURLStore.Len())
+	}
+
 	allowedChannels := make(map[string]bool, len(cfg.AllowedChannels))
 	for _, ch := range cfg.AllowedChannels {
 		allowedChannels[ch] = true
@@ -68,6 +77,7 @@ func NewAdapter(cfg config.TeamsConfig, pool *acp.SessionPool, transcriber stt.T
 		Mentions:          NewMentionDirectory(),
 		CronStore:         cronStore,
 		CronCfg:           cronCfg,
+		ServiceURLs:       serviceURLStore,
 	}
 
 	mux := buildMux(auth, handler)

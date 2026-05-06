@@ -79,6 +79,10 @@ error_hold_ms = 2500
 # allowed_user_id = ["921f866a-c005-4e5f-b520-38e6dbe29a5f"]
 # allowed_user_id = ["*"]
 # tool_display = "compact"   # full | compact | none — see [discord.reactions] above
+# Persists per-conversation Bot Framework serviceURLs so cron-fired
+# proactive messages survive pod restarts. Empty string disables
+# persistence (in-memory only — old behaviour). Default shown.
+# service_url_store_path = "./.quill/teams-serviceurls.json"
 
 [agent]
 command = "kiro-cli"
