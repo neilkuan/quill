@@ -171,6 +171,10 @@ type TeamsConfig struct {
 	// Use ["*"] as a wildcard to allow any user.
 	AllowedUserIDs []string `toml:"allowed_user_id"`
 	ToolDisplay    string   `toml:"tool_display"`
+	// ServiceURLStorePath persists the per-conversation Bot Framework
+	// serviceURL so cron-fired proactive messages survive pod restarts.
+	// Empty disables persistence (in-memory only — old behaviour).
+	ServiceURLStorePath string `toml:"service_url_store_path"`
 }
 
 // --- Defaults ---
@@ -220,6 +224,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Teams.Listen == "" {
 		cfg.Teams.Listen = ":3978"
+	}
+	if cfg.Teams.ServiceURLStorePath == "" {
+		cfg.Teams.ServiceURLStorePath = "./.quill/teams-serviceurls.json"
 	}
 
 	// Cronjob — defaults if [cronjob] block omitted or partial. Disabled

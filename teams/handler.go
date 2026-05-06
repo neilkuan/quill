@@ -54,12 +54,13 @@ type Handler struct {
 	memberSeedingMu     sync.Mutex
 	seededConversations map[string]bool
 
-	// serviceURLs caches the most-recent serviceURL per conversationID.
-	// Populated by every incoming activity; read by CronDispatcher when
-	// firing a scheduled job. The cache survives the process lifetime
-	// only — after restart, conversations need a real activity to repopulate.
-	serviceURLMu sync.RWMutex
-	serviceURLs  map[string]string
+	// ServiceURLs caches the most-recent serviceURL per conversationID
+	// and persists it to disk (when configured) so cron jobs can fire
+	// proactive messages across pod restarts. Populated by every
+	// incoming activity; read by CronDispatcher when firing a scheduled
+	// job. nil is permitted and behaves as an in-memory-only no-op,
+	// which keeps `&Handler{...}` test fixtures compiling.
+	ServiceURLs *ServiceURLStore
 
 	// Test-only override hooks. When non-nil, replace the default
 	// dispatch so adapter-level routing tests don't have to spin up the
@@ -1133,25 +1134,24 @@ func (h *Handler) downloadAttachment(att Attachment, tmpDir string) (string, err
 
 // rememberServiceURL caches the most-recent serviceURL for a
 // conversation. Idempotent and cheap; called on every incoming
-// activity that has both fields set.
+// activity that has both fields set. Persistence (when ServiceURLs is
+// configured with a path) only fsyncs when the URL changes, so the
+// steady state of "every inbound activity refreshes the same URL"
+// causes no disk churn.
 func (h *Handler) rememberServiceURL(conversationID, serviceURL string) {
 	if conversationID == "" || serviceURL == "" {
 		return
 	}
-	h.serviceURLMu.Lock()
-	defer h.serviceURLMu.Unlock()
-	if h.serviceURLs == nil {
-		h.serviceURLs = make(map[string]string)
+	if err := h.ServiceURLs.Set(conversationID, serviceURL); err != nil {
+		slog.Warn("teams: failed to persist serviceURL",
+			"conversation_id", conversationID, "error", err)
 	}
-	h.serviceURLs[conversationID] = serviceURL
 }
 
 // ServiceURLFor returns the cached serviceURL for a conversation,
 // or "" if none has been seen yet.
 func (h *Handler) ServiceURLFor(conversationID string) string {
-	h.serviceURLMu.RLock()
-	defer h.serviceURLMu.RUnlock()
-	return h.serviceURLs[conversationID]
+	return h.ServiceURLs.Get(conversationID)
 }
 
 // handleCronCommand routes /cron <sub> <args> to the cronjob package.
