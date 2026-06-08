@@ -294,6 +294,22 @@ jobs:
           PROMOTE_FROM_VERSION="${PROMOTE_FROM#v}"
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.variant.suffix }}"
 
+          # The stable tag may be pushed (and this job started) before the
+          # pre-release build's merge-manifests has finished pushing the rc
+          # image manifest — GitHub Actions runner queueing can delay that
+          # step by minutes. Poll for the rc image to appear before promoting
+          # so we don't race ahead of it.
+          echo "Waiting for pre-release image ${IMAGE}:${PROMOTE_FROM_VERSION} to be available..."
+          deadline=$((SECONDS + 600))
+          until docker buildx imagetools inspect "${IMAGE}:${PROMOTE_FROM_VERSION}" >/dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::Timed out after 10m waiting for ${IMAGE}:${PROMOTE_FROM_VERSION}"
+              exit 1
+            fi
+            echo "  not ready yet; retrying in 15s..."
+            sleep 15
+          done
+
           echo "Promoting ${IMAGE}:${PROMOTE_FROM_VERSION} → ${VERSION}"
           docker buildx imagetools create \
             -t "${IMAGE}:${VERSION}" \
@@ -325,9 +341,22 @@ jobs:
             exit 1
           fi
 
-          echo "Promoting chart ${PROMOTE_FROM_VERSION} → ${VERSION}"
+          # Same race as promote-stable: the stable tag can arrive before the
+          # pre-release build's push-chart step has uploaded the rc chart.
+          # Retry the pull until the rc chart is available.
+          echo "Waiting for pre-release chart ${PROMOTE_FROM_VERSION} to be available..."
           mkdir -p chart-src
-          helm pull "${CHART_REPO}/quill" --version "${PROMOTE_FROM_VERSION}" --untar --untardir chart-src
+          deadline=$((SECONDS + 600))
+          until helm pull "${CHART_REPO}/quill" --version "${PROMOTE_FROM_VERSION}" --untar --untardir chart-src 2>/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::Timed out after 10m waiting for chart ${PROMOTE_FROM_VERSION}"
+              exit 1
+            fi
+            echo "  not ready yet; retrying in 15s..."
+            sleep 15
+          done
+
+          echo "Promoting chart ${PROMOTE_FROM_VERSION} → ${VERSION}"
 
           sed -i "s/^version:.*/version: ${VERSION}/" chart-src/quill/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" chart-src/quill/Chart.yaml
