@@ -19,9 +19,9 @@ ARG GH_CLI_VERSION=2.102.0
 # and a manifest at /latest/manifest.json. To upgrade: run scripts/update-kiro-cli.sh
 # which rewrites these three ARGs. Pinning keeps this layer cacheable across
 # builds — it only invalidates when the pin is intentionally bumped.
-ARG KIRO_CLI_VERSION=2.26.1
-ARG KIRO_CLI_SHA256_AMD64=f8c5f1e26114875cf1a1188b3e7c6870d709dedad1d3a980549b74bd3e3d11b2
-ARG KIRO_CLI_SHA256_ARM64=c5253500f72e1cfe646d35ef1891b17b7cf3fdefe1bfee4d38984d6da42810b9
+ARG KIRO_CLI_VERSION=2.28.0
+ARG KIRO_CLI_SHA256_AMD64=4d6d20c3ffed99904081a062678b3c1978dc7d68c9f6c530f3f28f163011c8ee
+ARG KIRO_CLI_SHA256_ARM64=39169fc43557ff3c007ccf5388ff95413539b2c6a8dfab6c69e4a7b8899bebbc
 
 # Layer 1: stable system packages (rarely changes)
 # tini is needed as PID 1 so zombie children spawned by the agent (e.g.
