@@ -13,15 +13,15 @@ FROM public.ecr.aws/aws-cli/aws-cli:latest AS aws-source
 # --- Runtime stage ---
 FROM debian:bookworm-slim
 
-ARG GH_CLI_VERSION=2.103.3
+ARG GH_CLI_VERSION=2.106.0
 # kiro-cli is pinned by version + SHA256. AWS publishes versioned URLs and
 # per-zip .sha256 files at https://desktop-release.q.us-east-1.amazonaws.com/<ver>/
 # and a manifest at /latest/manifest.json. To upgrade: run scripts/update-kiro-cli.sh
 # which rewrites these three ARGs. Pinning keeps this layer cacheable across
 # builds — it only invalidates when the pin is intentionally bumped.
-ARG KIRO_CLI_VERSION=3.1.0
-ARG KIRO_CLI_SHA256_AMD64=6f43c9ca9811d1ef2d4b47148667243b5af2d4aaea7cdef3e9a6af1c10d4c8ba
-ARG KIRO_CLI_SHA256_ARM64=744701a386299ecc562766c591c54850cfae95775c19c0d6e3f4b5eaf55f87b0
+ARG KIRO_CLI_VERSION=3.7.0
+ARG KIRO_CLI_SHA256_AMD64=75425613667ea49f58425ef0324702c0a98a0b96c7dc1ef380d2b764036a9e88
+ARG KIRO_CLI_SHA256_ARM64=5f9b883dafe10acbdf07e48a67020a789a488c707f19a4e9b8a2c6aa279e0ed3
 
 # Layer 1: stable system packages (rarely changes)
 # tini is needed as PID 1 so zombie children spawned by the agent (e.g.
